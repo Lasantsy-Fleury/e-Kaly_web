@@ -1,0 +1,6 @@
+{
+  "name": "e-Kaly • Restauration des Étudiants en Voyage d'Études (ENI)",
+  "description": "Plateforme conviviale de gestion et suivi des repas lors des voyages d'études des étudiants de l'École Nationale d'Informatique. Planning quotidien, badges et pointages en direct.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,135 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\.: ]+$');
+    }
+
+    function isBootstrappedAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == "tokiniainanarivelosoa@gmail.com" &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() ||
+        (isSignedIn() && exists(/databases/$(database)/documents/admins/$(request.auth.uid))) ||
+        (isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' &&
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved');
+    }
+
+    function isApprovedPointer() {
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'pointer' &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved';
+    }
+
+    function isOperationalUser() {
+      return isAdmin() || isApprovedPointer();
+    }
+
+    // Test connection ping document
+    match /test/{testId} {
+      allow read: if isSignedIn();
+      allow write: if false;
+    }
+
+    // Admins collection
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && (request.auth.uid == adminId || isAdmin());
+      allow list: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // Users and Pointers
+    match /users/{userId} {
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isSignedIn() &&
+        isValidId(userId) &&
+        request.auth.uid == userId &&
+        (isAdmin() || (request.resource.data.role == 'pointer' && request.resource.data.status == 'pending'));
+
+      allow update: if isSignedIn() &&
+        isValidId(userId) &&
+        (
+          isAdmin() ||
+          (
+            request.auth.uid == userId &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['displayName', 'photoURL', 'requestedAt']) &&
+            request.resource.data.role == resource.data.role &&
+            request.resource.data.status == resource.data.status
+          )
+        );
+
+      allow delete: if isAdmin();
+    }
+
+    // Sessions de voyage d'études
+    match /sessions/{sessionId} {
+      allow get, list: if isOperationalUser();
+      allow create, update, delete: if isAdmin() && isValidId(sessionId);
+    }
+
+    // Students (Master 1 ENI)
+    match /students/{studentId} {
+      allow get, list: if isOperationalUser();
+      allow create, update, delete: if isAdmin() && isValidId(studentId);
+    }
+
+    // Distributions
+    match /distributions/{distributionId} {
+      allow get, list: if isOperationalUser();
+      allow create, update, delete: if isAdmin() && isValidId(distributionId);
+    }
+
+    // Pointages (Scans Mobile App)
+    match /pointages/{pointageId} {
+      allow get, list: if isOperationalUser();
+      allow create, update: if isOperationalUser() &&
+        isValidId(pointageId) &&
+        (isAdmin() || request.resource.data.pointerId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // Attendance Pointings (Web et Mobile)
+    match /attendance/{attendanceId} {
+      allow get, list: if isOperationalUser();
+
+      allow create, update: if isValidId(attendanceId) &&
+        (
+          isAdmin() ||
+          (
+            isApprovedPointer() &&
+            request.resource.data.pointeurId == request.auth.uid
+          )
+        ) &&
+        request.resource.data.keys().hasAll(['matricule', 'distributionId', 'statut']);
+
+      allow delete: if isAdmin();
+    }
+
+    // Audit logs
+    match /auditLogs/{logId} {
+      allow get, list: if isAdmin();
+      allow create: if isAdmin() &&
+        isValidId(logId) &&
+        request.resource.data.performedByUid == request.auth.uid;
+      allow update, delete: if false;
+    }
+  }
+}

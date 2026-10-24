@@ -1,0 +1,351 @@
+{
+  "entities": {
+    "Session": {
+      "title": "Session",
+      "description": "Voyage d'études session for M1 ENI students spanning multiple days",
+      "type": "object",
+      "properties": {
+        "nom": {
+          "type": "string",
+          "description": "Nom de la session de voyage",
+          "maxLength": 128
+        },
+        "destination": {
+          "type": "string",
+          "description": "Lieu ou itinéraire du voyage d'études",
+          "maxLength": 128
+        },
+        "dateDebut": {
+          "type": "string",
+          "description": "Date de début YYYY-MM-DD",
+          "maxLength": 32
+        },
+        "dateFin": {
+          "type": "string",
+          "description": "Date de fin YYYY-MM-DD",
+          "maxLength": 32
+        },
+        "statut": {
+          "type": "string",
+          "description": "Statut de la session",
+          "enum": ["planned", "ongoing", "completed", "archived"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Date de création ISO"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Date de mise à jour ISO"
+        }
+      },
+      "required": ["nom", "dateDebut", "dateFin", "statut"]
+    },
+    "User": {
+      "title": "User",
+      "description": "User accounts with role and approval status for e-Kaly administrators and pointers",
+      "type": "object",
+      "properties": {
+        "email": {
+          "type": "string",
+          "description": "User email address",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name of the user",
+          "maxLength": 256
+        },
+        "role": {
+          "type": "string",
+          "description": "Assigned role",
+          "enum": ["admin", "pointer"]
+        },
+        "status": {
+          "type": "string",
+          "description": "Account status",
+          "enum": ["pending", "approved", "rejected", "suspended"]
+        },
+        "requestedAt": {
+          "type": "string",
+          "description": "ISO timestamp of account request"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "ISO timestamp of last update"
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "UID of the administrator who performed the update",
+          "maxLength": 128
+        }
+      },
+      "required": ["email", "role", "status"]
+    },
+    "Student": {
+      "title": "Student",
+      "description": "Master 1 ENI student participating in a specific study trip session",
+      "type": "object",
+      "properties": {
+        "matricule": {
+          "type": "string",
+          "description": "Unique student matricule string preserving leading zeros",
+          "maxLength": 64
+        },
+        "sessionId": {
+          "type": "string",
+          "description": "Session ID of the study trip to which the student belongs",
+          "maxLength": 128
+        },
+        "sessionNom": {
+          "type": "string",
+          "description": "Nom de la session de voyage",
+          "maxLength": 128
+        },
+        "nom": {
+          "type": "string",
+          "description": "Nom de famille",
+          "maxLength": 128
+        },
+        "prenoms": {
+          "type": "string",
+          "description": "Prénoms de l'étudiant",
+          "maxLength": 128
+        },
+        "parcours": {
+          "type": "string",
+          "description": "Parcours ou mention ENI (ASR, GB, IG, etc.)",
+          "maxLength": 128
+        },
+        "genre": {
+          "type": "string",
+          "description": "Genre",
+          "maxLength": 32
+        },
+        "telephone": {
+          "type": "string",
+          "description": "Numéro de téléphone de contact",
+          "maxLength": 64
+        },
+        "email": {
+          "type": "string",
+          "description": "Email de l'étudiant",
+          "maxLength": 256
+        },
+        "qrCodeToken": {
+          "type": "string",
+          "description": "Technical unique token encoded into the QR code",
+          "maxLength": 128
+        },
+        "active": {
+          "type": "boolean",
+          "description": "Whether the student is active in the session"
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Update timestamp"
+        }
+      },
+      "required": ["matricule", "nom", "qrCodeToken"]
+    },
+    "Distribution": {
+      "title": "Distribution",
+      "description": "Food distribution session inside a study trip session (breakfast, water, lunch, dinner)",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "ID of parent travel session",
+          "maxLength": 128
+        },
+        "sessionNom": {
+          "type": "string",
+          "description": "Nom de la session de voyage",
+          "maxLength": 128
+        },
+        "nom": {
+          "type": "string",
+          "description": "Nom de la distribution",
+          "maxLength": 128
+        },
+        "date": {
+          "type": "string",
+          "description": "Date de distribution YYYY-MM-DD",
+          "maxLength": 32
+        },
+        "heureDebut": {
+          "type": "string",
+          "description": "Heure de début HH:mm",
+          "maxLength": 16
+        },
+        "heureFin": {
+          "type": "string",
+          "description": "Heure de fin HH:mm",
+          "maxLength": 16
+        },
+        "typeDistribution": {
+          "type": "string",
+          "description": "Type de distribution (Petit-déjeuner, Eau, Déjeuner, Dîner, Collation)",
+          "enum": ["Petit-déjeuner", "Eau", "Déjeuner", "Dîner", "Collation"]
+        },
+        "description": {
+          "type": "string",
+          "description": "Remarques ou détails facultatifs",
+          "maxLength": 512
+        },
+        "quantitePrevue": {
+          "type": "number",
+          "description": "Quantité stricte égale au nombre d'étudiants de la session"
+        },
+        "statut": {
+          "type": "string",
+          "description": "Statut de la distribution",
+          "enum": ["draft", "planned", "ongoing", "completed", "cancelled"]
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "Date de création ISO"
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "Date de mise à jour ISO"
+        }
+      },
+      "required": ["sessionId", "nom", "date", "heureDebut", "heureFin", "statut", "quantitePrevue"]
+    },
+    "Attendance": {
+      "title": "Attendance",
+      "description": "Individual meal scan attendance record synchronized from mobile devices or entered by pointers",
+      "type": "object",
+      "properties": {
+        "sessionId": {
+          "type": "string",
+          "description": "ID de la session de voyage",
+          "maxLength": 128
+        },
+        "matricule": {
+          "type": "string",
+          "description": "Matricule de l'étudiant",
+          "maxLength": 64
+        },
+        "studentNomComplet": {
+          "type": "string",
+          "description": "Nom complet de l'étudiant",
+          "maxLength": 256
+        },
+        "distributionId": {
+          "type": "string",
+          "description": "ID de la distribution",
+          "maxLength": 128
+        },
+        "distributionNom": {
+          "type": "string",
+          "description": "Nom de la distribution",
+          "maxLength": 128
+        },
+        "repasProduit": {
+          "type": "string",
+          "description": "Repas ou produit (Petit-déjeuner, Eau, Déjeuner, Dîner)",
+          "maxLength": 64
+        },
+        "scannedAt": {
+          "type": "string",
+          "description": "Horodatage scan mobile",
+          "maxLength": 64
+        },
+        "syncedAt": {
+          "type": "string",
+          "description": "Horodatage synchronisation serveur",
+          "maxLength": 64
+        },
+        "pointeurId": {
+          "type": "string",
+          "description": "UID du pointeur responsable",
+          "maxLength": 128
+        },
+        "pointeurNom": {
+          "type": "string",
+          "description": "Nom du pointeur responsable",
+          "maxLength": 128
+        },
+        "statut": {
+          "type": "string",
+          "description": "Statut de validation du pointage",
+          "enum": ["valid", "duplicate_attempt", "ineligible", "cancelled"]
+        },
+        "anomalie": {
+          "type": "string",
+          "description": "Détail de l'anomalie éventuelle",
+          "maxLength": 256
+        }
+      },
+      "required": ["matricule", "distributionId", "statut"]
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Administrative actions log for security and traceability",
+      "type": "object",
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Action performed",
+          "maxLength": 128
+        },
+        "details": {
+          "type": "string",
+          "description": "Détails de l'action",
+          "maxLength": 512
+        },
+        "performedByUid": {
+          "type": "string",
+          "description": "UID de l'administrateur",
+          "maxLength": 128
+        },
+        "performedByEmail": {
+          "type": "string",
+          "description": "Email de l'administrateur",
+          "maxLength": 256
+        },
+        "timestamp": {
+          "type": "string",
+          "description": "Horodatage ISO"
+        }
+      },
+      "required": ["action", "performedByUid", "timestamp"]
+    }
+  },
+  "firestore": {
+    "/sessions/{sessionId}": {
+      "schema": "Session",
+      "description": "Voyages d'études sessions"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User accounts, roles and approval status"
+    },
+    "/admins/{userId}": {
+      "schema": "User",
+      "description": "Bootstrap and verified administrator pointers"
+    },
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Master 1 ENI student records participating in study trips"
+    },
+    "/distributions/{distributionId}": {
+      "schema": "Distribution",
+      "description": "Daily food distributions per study trip session"
+    },
+    "/attendance/{attendanceId}": {
+      "schema": "Attendance",
+      "description": "Individual attendance check-ins synced from mobile or web"
+    },
+    "/auditLogs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Critical administrative activity log"
+    }
+  }
+}

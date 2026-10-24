@@ -1,0 +1,12 @@
+# robots.txt for e-Kaly Web
+User-agent: *
+Allow: /$
+Disallow: /admin
+Disallow: /students
+Disallow: /distributions
+Disallow: /attendance
+Disallow: /accounts
+Disallow: /stats
+Disallow: /api/
+
+Sitemap: https://ais-dev-6m6pmga5644kk56fu3llxd-401972438895.europe-west1.run.app/sitemap.xml
