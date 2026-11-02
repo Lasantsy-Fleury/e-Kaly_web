@@ -14,27 +14,27 @@ interface TopBarProps {
 const TAB_TITLES: Record<NavTab, { title: string; subtitle: string }> = {
   dashboard: {
     title: 'Tableau de bord',
-    subtitle: 'Vue d’ensemble des distributions, éligibilité et participation étudiante',
+    subtitle: 'Supervision globale des distributions, taux de participation et statistiques en temps réel',
   },
   sessions: {
-    title: 'Sessions de Voyages d’Études',
-    subtitle: 'Organisation, programmation multi-jours et suivi des voyages d’études des M1 ENI',
+    title: 'Sessions de voyages d’études',
+    subtitle: 'Planification, gestion des promotions et affectation des équipes de pointage',
   },
   students: {
-    title: 'Répertoire des Étudiants',
-    subtitle: 'Gestion des inscrits, importations Excel et génération des badges QR Code',
+    title: 'Répertoire des étudiants',
+    subtitle: 'Gestion des inscrits, cartes d’accès QR Code et statut d’éligibilité',
   },
   distributions: {
-    title: 'Planification des Distributions',
-    subtitle: 'Programmation des sessions alimentaires, repas servis et critères d’accès',
+    title: 'Distributions alimentaires',
+    subtitle: 'Programmation des créneaux de repas, menus servis et règles de distribution',
   },
   attendance: {
-    title: 'Journal des Pointages',
-    subtitle: 'Pointages en direct synchronisés depuis les appareils mobiles et contrôles',
+    title: 'Journal des pointages',
+    subtitle: 'Historique des émargements horodatés et synchronisation multi-terminaux',
   },
   accounts: {
-    title: 'Comptes & Autorisations',
-    subtitle: 'Approbation des comptes pointeurs, gestion des accès et journal d’audit',
+    title: 'Comptes et autorisations',
+    subtitle: 'Gestion des rôles, affectations de sessions et validation des accès pointeurs',
   },
 };
 

@@ -1,6 +1,5 @@
 import React from 'react';
 import {
-  Utensils,
   LayoutDashboard,
   Compass,
   Users,
@@ -118,9 +117,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         <div className="flex flex-col">
           <div className="h-16 px-4 flex items-center justify-between border-b border-gray-100">
             <div className="flex items-center gap-3 overflow-hidden">
-              <div className="w-10 h-10 rounded-xl bg-green-600 flex items-center justify-center text-white shadow-xs shrink-0">
-                <Utensils className="w-5 h-5" />
-              </div>
+              <img
+                src="/logo.jpg"
+                alt="Logo e-Kaly"
+                className="w-10 h-10 rounded-xl object-cover shadow-xs shrink-0 border border-gray-100"
+              />
 
               {(!isCollapsed || isMobileOpen) && (
                 <div className="flex flex-col min-w-0 transition-opacity duration-200">
@@ -130,7 +131,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                     </span>
                   </div>
                   <span className="text-[11px] text-gray-400 truncate">
-                    Voyages d'Études
+                    Restauration ENI
                   </span>
                 </div>
               )}

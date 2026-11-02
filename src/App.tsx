@@ -93,9 +93,9 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // 2. Subscribe to Firestore Collections when authenticated & approved
+  // 2. Subscribe to Firestore Collections when authenticated & approved as admin
   useEffect(() => {
-    if (!currentUser || !currentAccount || currentAccount.status !== 'approved') {
+    if (!currentUser || !currentAccount || currentAccount.status !== 'approved' || currentAccount.role !== 'admin') {
       setSessions([]);
       setStudents([]);
       setDistributions([]);
@@ -242,8 +242,8 @@ export default function App() {
     );
   }
 
-  // Not authenticated or pending/suspended
-  if (!currentUser || !currentAccount || currentAccount.status !== 'approved') {
+  // Not authenticated, pending/suspended, or non-admin
+  if (!currentUser || !currentAccount || currentAccount.status !== 'approved' || currentAccount.role !== 'admin') {
     return (
       <AuthScreen
         currentAccount={currentAccount}

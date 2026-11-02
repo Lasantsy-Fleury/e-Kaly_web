@@ -12,6 +12,15 @@ import {
   MapPin,
   Utensils,
   AlertCircle,
+  ShieldCheck,
+  ShieldAlert,
+  Layers,
+  Activity,
+  Award,
+  Percent,
+  Check,
+  XCircle,
+  Sparkles,
 } from 'lucide-react';
 import { Attendance, Distribution, Session, Student, UserAccount } from '../../types';
 import { motion } from 'motion/react';
@@ -93,9 +102,9 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     return distributions.filter((d) => d.sessionId === effectiveSessionId);
   }, [distributions, effectiveSessionId, isPointerRole, assignedSessionId]);
 
-  // Status counts
+  // Status counts for distributions
   const plannedDistCount = useMemo(
-    () => sessionDistributions.filter((d) => d.statut === 'planned').length,
+    () => sessionDistributions.filter((d) => d.statut === 'planned' || d.statut === 'draft').length,
     [sessionDistributions]
   );
   const ongoingDistCount = useMemo(
@@ -134,58 +143,139 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     assignedSessionId,
   ]);
 
-  const validPointagesCount = useMemo(
-    () => relevantAttendances.filter((a) => a.statut === 'valid').length,
-    [relevantAttendances]
-  );
-
   const selectedDistribution = useMemo(
     () => sessionDistributions.find((d) => d.id === selectedDistributionId),
     [sessionDistributions, selectedDistributionId]
   );
 
-  // Participation rate = (unique valid matricules / session student count) * 100%
-  const participationRate = useMemo(() => {
-    const totalEligible = sessionStudents.length;
-    if (totalEligible === 0) return 0;
-
-    const uniqueValidMatricules = new Set(
-      relevantAttendances.filter((a) => a.statut === 'valid').map((a) => a.matricule)
-    );
-    const rate = (uniqueValidMatricules.size / totalEligible) * 100;
-    return Math.min(100, Math.round(rate * 10) / 10);
-  }, [sessionStudents, relevantAttendances]);
-
-  // Breakdown by meal/product
-  const mealBreakdown = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const a of relevantAttendances) {
-      if (a.statut === 'valid') {
-        counts[a.repasProduit] = (counts[a.repasProduit] || 0) + 1;
-      }
-    }
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  }, [relevantAttendances]);
-
-  // Breakdown by pointer
-  const pointerBreakdown = useMemo(() => {
-    const counts: Record<string, { name: string; count: number }> = {};
-    for (const a of relevantAttendances) {
-      if (a.statut === 'valid') {
-        const id = a.pointeurId || 'unassigned';
-        if (!counts[id]) {
-          counts[id] = { name: a.pointeurNom || 'Pointeur', count: 0 };
-        }
-        counts[id].count++;
-      }
-    }
-    return Object.values(counts).sort((a, b) => b.count - a.count);
-  }, [relevantAttendances]);
-
-  const anomaliesCount = useMemo(
-    () => relevantAttendances.filter((a) => a.statut !== 'valid').length,
+  // 1. DATA ANALYST METRICS: Attendance & Service Quantities
+  const validAttendances = useMemo(
+    () => relevantAttendances.filter((a) => a.statut === 'valid'),
     [relevantAttendances]
   );
+  const validPointagesCount = validAttendances.length;
+
+  const duplicateAttemptsCount = useMemo(
+    () => relevantAttendances.filter((a) => a.statut === 'already_pointed').length,
+    [relevantAttendances]
+  );
+  const ineligibleAttemptsCount = useMemo(
+    () => relevantAttendances.filter((a) => a.statut === 'ineligible').length,
+    [relevantAttendances]
+  );
+  const totalAnomaliesCount = duplicateAttemptsCount + ineligibleAttemptsCount;
+
+  // Rate of successful pointages vs total scan attempts (Integrity score)
+  const complianceRate = useMemo(() => {
+    const total = relevantAttendances.length;
+    if (total === 0) return 100;
+    return Math.round((validPointagesCount / total) * 1000) / 10;
+  }, [relevantAttendances.length, validPointagesCount]);
+
+  // Unique students who received at least one meal in the current selection
+  const uniqueStudentsServed = useMemo(() => {
+    return new Set(validAttendances.map((a) => a.matricule));
+  }, [validAttendances]);
+
+  // Participation rate = (Unique students served / Total registered students) * 100%
+  const studentReachRate = useMemo(() => {
+    const total = sessionStudents.length;
+    if (total === 0) return 0;
+    return Math.min(100, Math.round((uniqueStudentsServed.size / total) * 1000) / 10);
+  }, [sessionStudents.length, uniqueStudentsServed.size]);
+
+  // Planned rations vs Actual rations served
+  const plannedRationsCount = useMemo(() => {
+    if (selectedDistribution) {
+      return selectedDistribution.quantitePrevue || sessionStudents.length;
+    }
+    if (sessionDistributions.length === 0) return 0;
+    return sessionDistributions.reduce(
+      (acc, d) => acc + (d.quantitePrevue || sessionStudents.length),
+      0
+    );
+  }, [selectedDistribution, sessionDistributions, sessionStudents.length]);
+
+  const serviceCompletionRate = useMemo(() => {
+    if (plannedRationsCount === 0) return 0;
+    return Math.min(100, Math.round((validPointagesCount / plannedRationsCount) * 1000) / 10);
+  }, [plannedRationsCount, validPointagesCount]);
+
+  const unclaimedRationsCount = useMemo(() => {
+    return Math.max(0, plannedRationsCount - validPointagesCount);
+  }, [plannedRationsCount, validPointagesCount]);
+
+  // 2. DISTRIBUTION PERFORMANCE MATRIX (Per-Meal Delivery & Real Coverage)
+  const distributionDeliveryStats = useMemo(() => {
+    return sessionDistributions.map((dist) => {
+      const distAttendances = attendances.filter(
+        (a) => a.distributionId === dist.id && a.statut === 'valid'
+      );
+      const targetCount = dist.quantitePrevue || sessionStudents.length || 1;
+      const servedCount = distAttendances.length;
+      const deliveryRate = Math.min(100, Math.round((servedCount / targetCount) * 1000) / 10);
+      const remainingCount = Math.max(0, targetCount - servedCount);
+
+      return {
+        distribution: dist,
+        served: servedCount,
+        target: targetCount,
+        rate: deliveryRate,
+        remaining: remainingCount,
+      };
+    });
+  }, [sessionDistributions, attendances, sessionStudents.length]);
+
+  // 3. PARCOURS / FILIÈRE BREAKDOWN (Academic track participation)
+  const parcoursStats = useMemo(() => {
+    const byParcours: Record<string, { total: number; served: number }> = {};
+
+    // Group students by parcours
+    sessionStudents.forEach((s) => {
+      const p = (s.parcours || s.niveau || 'Général').trim().toUpperCase();
+      if (!byParcours[p]) {
+        byParcours[p] = { total: 0, served: 0 };
+      }
+      byParcours[p].total++;
+    });
+
+    // Mark served
+    uniqueStudentsServed.forEach((matricule) => {
+      const st = sessionStudents.find((s) => s.matricule === matricule);
+      if (st) {
+        const p = (st.parcours || st.niveau || 'Général').trim().toUpperCase();
+        if (byParcours[p]) {
+          byParcours[p].served++;
+        }
+      }
+    });
+
+    return Object.entries(byParcours)
+      .map(([parcours, data]) => ({
+        parcours,
+        total: data.total,
+        served: data.served,
+        rate: data.total > 0 ? Math.round((data.served / data.total) * 1000) / 10 : 0,
+      }))
+      .sort((a, b) => b.total - a.total);
+  }, [sessionStudents, uniqueStudentsServed]);
+
+  // 4. POINTER TEAM ACTIVITY BREAKDOWN
+  const pointerActivityStats = useMemo(() => {
+    const counts: Record<string, { name: string; count: number }> = {};
+    for (const a of validAttendances) {
+      const id = a.pointeurId || 'unassigned';
+      if (!counts[id]) {
+        counts[id] = { name: a.pointeurNom || 'Pointeur', count: 0 };
+      }
+      counts[id].count++;
+    }
+    const list = Object.values(counts).sort((a, b) => b.count - a.count);
+    return list.map((item) => ({
+      ...item,
+      share: validPointagesCount > 0 ? Math.round((item.count / validPointagesCount) * 100) : 0,
+    }));
+  }, [validAttendances, validPointagesCount]);
 
   if (students.length === 0 && distributions.length === 0 && sessions.length === 0) {
     return (
@@ -227,12 +317,13 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
         </div>
       )}
 
-      {/* Session Banner and Filter Toolbar */}
+      {/* Global Filter & Analytical Control Toolbar */}
       <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
+          {/* Session Selector */}
           <div className="flex items-center gap-1.5 text-xs font-bold text-gray-700">
             <MapPin className="w-4 h-4 text-emerald-600" />
-            Session de voyage :
+            Session :
           </div>
 
           <select
@@ -256,9 +347,10 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             ))}
           </select>
 
-          {/* Distribution Filter */}
+          {/* Distribution Selector */}
           <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
-            <label htmlFor="dist-select" className="text-xs font-medium text-gray-700">
+            <label htmlFor="dist-select" className="text-xs font-medium text-gray-700 flex items-center gap-1">
+              <CalendarDays className="w-3.5 h-3.5 text-gray-500" />
               Distribution :
             </label>
             <select
@@ -268,7 +360,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               className="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500"
             >
               <option value="all">
-                {sessionDistributions.length === 0 ? 'Aucune distribution' : `Toutes les distributions (${sessionDistributions.length})`}
+                {sessionDistributions.length === 0 ? 'Aucune distribution' : `Vue globale (${sessionDistributions.length} repas)`}
               </option>
               {sessionDistributions.map((d) => (
                 <option key={d.id} value={d.id}>
@@ -278,11 +370,11 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             </select>
           </div>
 
-          {/* Pointer Account Filter */}
+          {/* Pointer Account Selector */}
           <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
             <label htmlFor="pointer-select" className="text-xs font-medium text-gray-700 flex items-center gap-1">
               <Users className="w-3.5 h-3.5 text-gray-500" />
-              Compte pointeur :
+              Agent pointeur :
             </label>
             <select
               id="pointer-select"
@@ -293,7 +385,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               <option value="all">
                 {availablePointers.length === 0
                   ? 'Tous les pointeurs'
-                  : `Tous les comptes pointeurs (${availablePointers.length})`}
+                  : `Toute l'équipe (${availablePointers.length} pointeurs)`}
               </option>
               {availablePointers.map((p) => (
                 <option key={p.id} value={p.id}>
@@ -304,6 +396,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
+        {/* Action Buttons */}
         <div className="flex items-center gap-2">
           {!isPointerRole && (
             <button
@@ -317,97 +410,91 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             onClick={() =>
               exportAttendanceToExcel(
                 relevantAttendances,
-                `rapport-voyage-etudes-${new Date().toISOString().slice(0, 10)}.xlsx`
+                `rapport-statistiques-repas-${new Date().toISOString().slice(0, 10)}.xlsx`
               )
             }
-            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-green-700 bg-green-50 hover:bg-green-100 border border-green-200 rounded-lg transition-colors"
+            className="inline-flex items-center gap-2 px-3 py-1.5 text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 rounded-lg transition-colors shadow-2xs"
+            title="Télécharger l'analyse statistique complète sous Excel"
           >
-            <FileSpreadsheet className="w-4 h-4 text-green-600" />
+            <FileSpreadsheet className="w-4 h-4 text-emerald-600" />
             Exporter rapport Excel
           </button>
         </div>
       </div>
 
-      {/* Empty Sessions Notice */}
-      {!isPointerRole && sessions.length === 0 && (
-        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-xs">
-          <div className="flex items-center gap-2.5">
-            <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
-            <span>
-              Aucune session de voyage d'études n'est actuellement enregistrée. Créez une première session pour commencer à planifier les distributions de repas et organiser les effectifs étudiants.
-            </span>
+      {/* Selected Distribution Detail Banner if Focused */}
+      {selectedDistribution && (
+        <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 shadow-xs">
+          <div className="flex items-start gap-3">
+            <div className="w-10 h-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+              <Utensils className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <h3 className="text-sm font-bold text-gray-900">{selectedDistribution.nom}</h3>
+                <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-emerald-200 text-emerald-900">
+                  {selectedDistribution.typeDistribution}
+                </span>
+                <span className="text-xs text-emerald-800 font-medium">
+                  {selectedDistribution.date} • {selectedDistribution.heureDebut} à {selectedDistribution.heureFin}
+                </span>
+              </div>
+              <p className="text-xs text-gray-600 mt-1">
+                Contenu servi : <strong className="text-gray-900">{selectedDistribution.repasProduits.join(', ')}</strong> •
+                Objectif de distribution : <strong className="text-gray-900">{selectedDistribution.quantitePrevue} portions</strong>
+              </p>
+            </div>
           </div>
-          <button
-            onClick={onOpenSessionModal}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-700 text-white font-semibold rounded-lg shrink-0 transition-colors"
-          >
-            Créer une session
-          </button>
+
+          <div className="flex items-center gap-4 border-t md:border-t-0 md:border-l border-emerald-200 pt-3 md:pt-0 md:pl-4">
+            <div className="text-right">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase">Taux de couverture</p>
+              <p className="text-lg font-bold text-emerald-700">
+                {serviceCompletionRate}%
+              </p>
+            </div>
+            <div className="text-right">
+              <p className="text-[11px] font-semibold text-gray-500 uppercase">Rations restantes</p>
+              <p className="text-lg font-bold text-gray-900 font-mono">
+                {unclaimedRationsCount}
+              </p>
+            </div>
+          </div>
         </div>
       )}
 
-      {/* KPI Cards Grid */}
+      {/* EXECUTIVE KPI SUMMARY CARDS */}
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.25 }}
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"
       >
-        {/* Total Students in Session */}
+        {/* KPI 1: Effectif & Couverture Étudiante */}
         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
-              Effectif
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              Couverture Étudiants
             </span>
             <div className="w-8 h-8 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center">
               <Users className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-gray-900">{sessionStudents.length}</span>
-            <span className="text-xs text-gray-500">étudiants inscrits</span>
+            <span className="text-2xl font-bold text-gray-900">{uniqueStudentsServed.size}</span>
+            <span className="text-xs text-gray-500">/ {sessionStudents.length} inscrits</span>
           </div>
-          <div className="mt-3 text-xs text-gray-500 flex items-center justify-between pt-2 border-t border-gray-100">
-            <span>Ration par repas :</span>
-            <span className="font-semibold text-emerald-800 font-mono">
-              = {sessionStudents.length} portions
-            </span>
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-600 pt-2 border-t border-gray-100">
+            <span>Taux de présence :</span>
+            <span className="font-bold text-emerald-700 font-mono">{studentReachRate}%</span>
           </div>
         </div>
 
-        {/* Distributions in multi-day voyage */}
+        {/* KPI 2: Repas Distribués (Volume Réel) */}
         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
-              Distributions du Voyage
-            </span>
-            <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center">
-              <CalendarDays className="w-4 h-4" />
-            </div>
-          </div>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-gray-900">{sessionDistributions.length}</span>
-            <span className="text-xs text-gray-500">repas programmés</span>
-          </div>
-          <div className="mt-3 flex items-center justify-between text-xs text-gray-500 pt-2 border-t border-gray-100">
-            <span className="inline-flex items-center gap-1 text-amber-700 font-medium">
-              <Clock className="w-3 h-3" /> {plannedDistCount} planifiée(s)
-            </span>
-            <span className="inline-flex items-center gap-1 text-green-700 font-medium">
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse" />
-              {ongoingDistCount} en cours
-            </span>
-            <span className="text-gray-600 font-medium">
-              {completedDistCount} finie(s)
-            </span>
-          </div>
-        </div>
-
-        {/* Valid Pointages / Pointages effectués (filtré par distribution et par compte pointeur) */}
-        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
-              Pointages effectués
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              Rations Distribuées
             </span>
             <div className="w-8 h-8 rounded-lg bg-green-50 text-green-700 flex items-center justify-center">
               <CheckCircle2 className="w-4 h-4" />
@@ -415,140 +502,317 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
           <div className="mt-2 flex items-baseline gap-2">
             <span className="text-2xl font-bold text-green-700">{validPointagesCount}</span>
-            <span className="text-xs text-gray-500">repas servis valides</span>
+            <span className="text-xs text-gray-500">scans valides</span>
           </div>
-          <div className="mt-3 text-xs text-gray-500 flex flex-col gap-1 pt-2 border-t border-gray-100">
-            <div className="flex items-center justify-between text-[11px]">
-              <span className="truncate font-medium text-gray-600">
-                {selectedDistributionId !== 'all' ? '1 distribution ciblée' : 'Toutes distributions'}
-                {selectedPointerId !== 'all' ? ' • 1 compte pointeur' : ''}
-              </span>
-              <span className={`font-semibold shrink-0 ${anomaliesCount > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
-                {anomaliesCount} rejet(s)
-              </span>
-            </div>
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-600 pt-2 border-t border-gray-100">
+            <span>Sur total prévu :</span>
+            <span className="font-bold text-gray-900 font-mono">{plannedRationsCount} portions</span>
           </div>
         </div>
 
-        {/* Participation Rate */}
+        {/* KPI 3: Taux d'Émargement Logistique */}
         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
-              Taux de Participation
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              Taux de Service
             </span>
-            <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center">
+            <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center">
               <TrendingUp className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-green-700">{participationRate}%</span>
-            <span className="text-xs text-gray-500">
-              sur {sessionStudents.length} étudiants
+            <span className="text-2xl font-bold text-blue-700">{serviceCompletionRate}%</span>
+            <span className="text-xs text-gray-500">délivrance</span>
+          </div>
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-600 pt-2 border-t border-gray-100">
+            <span>Reste à servir :</span>
+            <span className={`font-bold font-mono ${unclaimedRationsCount > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
+              {unclaimedRationsCount} portion(s)
             </span>
           </div>
-          <div className="mt-3 w-full bg-gray-100 rounded-full h-2 overflow-hidden">
-            <div
-              className="bg-green-600 h-2 rounded-full transition-all duration-500"
-              style={{ width: `${participationRate}%` }}
-            />
+        </div>
+
+        {/* KPI 4: Sécurité & Contrôle d'Accès */}
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">
+              Conformité Accès
+            </span>
+            <div className="w-8 h-8 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center">
+              <ShieldCheck className="w-4 h-4" />
+            </div>
+          </div>
+          <div className="mt-2 flex items-baseline gap-2">
+            <span className="text-2xl font-bold text-gray-900">{complianceRate}%</span>
+            <span className="text-xs text-gray-500">scans conformes</span>
+          </div>
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-600 pt-2 border-t border-gray-100">
+            <span>Doublons bloqués :</span>
+            <span className={`font-bold font-mono ${duplicateAttemptsCount > 0 ? 'text-amber-700' : 'text-emerald-700'}`}>
+              {duplicateAttemptsCount} évité(s)
+            </span>
           </div>
         </div>
       </motion.div>
 
-      {/* Selected Distribution Banner */}
-      {selectedDistribution && (
-        <div className="bg-emerald-50/70 border border-emerald-200 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3">
+      {/* DETAILED STATISTICAL MODULES (2x2 Grid) */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Module 1: Suivi Réel par Créneau de Repas (Replaces the broken 100% breakdown) */}
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
           <div>
-            <div className="flex items-center gap-2">
-              <h4 className="text-sm font-bold text-emerald-950">
-                Focus : {selectedDistribution.nom} ({selectedDistribution.typeDistribution})
-              </h4>
-              <span className="text-xs px-2 py-0.5 rounded-full font-medium bg-emerald-200 text-emerald-900">
-                {selectedDistribution.date} ({selectedDistribution.heureDebut} - {selectedDistribution.heureFin})
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <CalendarDays className="w-4 h-4 text-emerald-700" />
+                <h4 className="text-sm font-bold text-gray-900">
+                  Progression par distribution alimentaire
+                </h4>
+              </div>
+              <span className="text-xs font-semibold text-gray-500">
+                {distributionDeliveryStats.length} créneau(x)
               </span>
             </div>
-            <p className="text-xs text-emerald-800 mt-1">
-              Repas prévus : <strong>{selectedDistribution.repasProduits.join(', ')}</strong> • Quantité exacte : <strong>{selectedDistribution.quantitePrevue} rations</strong> (égal aux {sessionStudents.length} étudiants de la session)
-            </p>
+
+            {distributionDeliveryStats.length === 0 ? (
+              <div className="py-12 text-center text-xs text-gray-500">
+                Aucune distribution planifiée pour cette session.
+              </div>
+            ) : (
+              <div className="space-y-4 max-h-[380px] overflow-y-auto pr-1">
+                {distributionDeliveryStats.map(({ distribution: dist, served, target, rate, remaining }) => {
+                  const isCurrent = selectedDistributionId === dist.id;
+                  return (
+                    <div
+                      key={dist.id}
+                      onClick={() => setSelectedDistributionId(isCurrent ? 'all' : dist.id)}
+                      className={`p-3 rounded-xl border transition-all cursor-pointer ${
+                        isCurrent
+                          ? 'border-emerald-500 bg-emerald-50/50 shadow-2xs'
+                          : 'border-gray-100 hover:border-gray-200 bg-gray-50/60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between text-xs mb-1.5">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-gray-900">{dist.nom}</span>
+                          <span className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-white border border-gray-200 text-gray-700">
+                            {dist.typeDistribution}
+                          </span>
+                        </div>
+                        <span className="font-mono font-bold text-emerald-800">
+                          {served} / {target} ({rate}%)
+                        </span>
+                      </div>
+
+                      <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden mb-1.5">
+                        <div
+                          className={`h-2 rounded-full transition-all duration-500 ${
+                            rate >= 90
+                              ? 'bg-emerald-600'
+                              : rate >= 50
+                              ? 'bg-blue-600'
+                              : 'bg-amber-500'
+                          }`}
+                          style={{ width: `${rate}%` }}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-gray-500">
+                        <span>
+                          {dist.date} • {dist.heureDebut} à {dist.heureFin}
+                        </span>
+                        <span>
+                          {remaining === 0 ? 'Complet' : `${remaining} ration(s) restante(s)`}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
-          <div className="text-xs font-medium text-emerald-900 font-mono">
-            {validPointagesCount} scans valides / {selectedDistribution.quantitePrevue} prévus
+
+          <div className="mt-4 pt-3 border-t border-gray-100 text-[11px] text-gray-400 flex items-center justify-between">
+            <span>Cliquez sur un créneau pour filtrer l'ensemble du tableau de bord.</span>
+            {selectedDistributionId !== 'all' && (
+              <button
+                onClick={() => setSelectedDistributionId('all')}
+                className="text-emerald-700 font-semibold hover:underline"
+              >
+                Réinitialiser le filtre
+              </button>
+            )}
           </div>
         </div>
-      )}
 
-      {/* Breakdown Grids */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Breakdown by Meal / Product */}
-        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <PieChart className="w-4 h-4 text-green-700" />
-              <h4 className="text-sm font-bold text-gray-900">Répartition par repas / boisson</h4>
+        {/* Module 2: Présence par Parcours / Filière ENI (ASR, GB, IG...) */}
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <PieChart className="w-4 h-4 text-emerald-700" />
+                <h4 className="text-sm font-bold text-gray-900">
+                  Participation par filière (Parcours M1)
+                </h4>
+              </div>
+              <span className="text-xs font-semibold text-gray-500">
+                {parcoursStats.length} filière(s)
+              </span>
             </div>
-            <span className="text-xs text-gray-500">{mealBreakdown.length} aliment(s)</span>
-          </div>
 
-          {mealBreakdown.length === 0 ? (
-            <div className="py-8 text-center text-xs text-gray-500">
-              Aucun pointage valide pour cette sélection.
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {mealBreakdown.map(([meal, count]) => {
-                const percent = Math.round((count / (validPointagesCount || 1)) * 100);
-                return (
-                  <div key={meal} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs font-medium">
-                      <span className="text-gray-700">{meal}</span>
-                      <span className="text-gray-900 font-bold">
-                        {count} pointage(s) ({percent}%)
+            {parcoursStats.length === 0 ? (
+              <div className="py-12 text-center text-xs text-gray-500">
+                Aucun étudiant enregistré pour cette session.
+              </div>
+            ) : (
+              <div className="space-y-3.5 max-h-[380px] overflow-y-auto pr-1">
+                {parcoursStats.map((item) => (
+                  <div key={item.parcours} className="space-y-1">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="font-semibold text-gray-800">
+                        {item.parcours}
+                      </span>
+                      <span className="font-mono text-gray-900">
+                        <strong className="text-emerald-700 font-bold">{item.served}</strong> / {item.total} étudiants ({item.rate}%)
                       </span>
                     </div>
+
                     <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden">
                       <div
-                        className="bg-green-600 h-2 rounded-full"
-                        style={{ width: `${percent}%` }}
+                        className="bg-emerald-600 h-2 rounded-full transition-all duration-500"
+                        style={{ width: `${item.rate}%` }}
                       />
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
-
-        {/* Breakdown by Pointer */}
-        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="w-4 h-4 text-green-700" />
-              <h4 className="text-sm font-bold text-gray-900">Activité des pointeurs</h4>
-            </div>
-            <span className="text-xs text-gray-500">{pointerBreakdown.length} pointeur(s)</span>
+                ))}
+              </div>
+            )}
           </div>
 
-          {pointerBreakdown.length === 0 ? (
-            <div className="py-8 text-center text-xs text-gray-500">
-              Aucun pointage pour cette sélection.
+          <div className="mt-4 pt-3 border-t border-gray-100 text-[11px] text-gray-500 flex items-center gap-1.5">
+            <Award className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+            <span>Permet de vérifier qu'aucune promotion n'est oubliée lors des déplacements.</span>
+          </div>
+        </div>
+
+        {/* Module 3: Répartition de la Charge Opérationnelle (Pointeurs) */}
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <BarChart3 className="w-4 h-4 text-emerald-700" />
+                <h4 className="text-sm font-bold text-gray-900">
+                  Activité et répartition des pointeurs
+                </h4>
+              </div>
+              <span className="text-xs font-semibold text-gray-500">
+                {pointerActivityStats.length} agent(s) actif(s)
+              </span>
             </div>
-          ) : (
-            <div className="divide-y divide-gray-100">
-              {pointerBreakdown.map((p, idx) => (
-                <div key={idx} className="py-2.5 flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="w-6 h-6 rounded-full bg-gray-100 text-gray-700 text-xs font-bold flex items-center justify-center">
-                      {idx + 1}
+
+            {pointerActivityStats.length === 0 ? (
+              <div className="py-12 text-center text-xs text-gray-500">
+                Aucun émargement enregistré pour cette sélection.
+              </div>
+            ) : (
+              <div className="divide-y divide-gray-100">
+                {pointerActivityStats.map((item, idx) => (
+                  <div key={idx} className="py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-2.5">
+                      <span className="w-6 h-6 rounded-lg bg-emerald-50 text-emerald-800 text-xs font-bold flex items-center justify-center shrink-0">
+                        {idx + 1}
+                      </span>
+                      <div>
+                        <p className="text-xs font-semibold text-gray-900 leading-tight">
+                          {item.name}
+                        </p>
+                        <p className="text-[10px] text-gray-400">
+                          {item.share}% de la charge globale
+                        </p>
+                      </div>
+                    </div>
+
+                    <span className="text-xs font-bold font-mono text-emerald-800 px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-100">
+                      {item.count} scan(s)
                     </span>
-                    <span className="text-xs font-semibold text-gray-800">{p.name}</span>
                   </div>
-                  <span className="text-xs font-bold text-green-700 px-2.5 py-0.5 rounded-full bg-green-50 border border-green-100">
-                    {p.count} pointage(s)
-                  </span>
-                </div>
-              ))}
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-gray-100 text-[11px] text-gray-400">
+            Traçabilité nominale synchronisée en direct depuis les terminaux Android.
+          </div>
+        </div>
+
+        {/* Module 4: Audit de Sécurité & Filtrage d'Accès */}
+        <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs flex flex-col justify-between">
+          <div>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-emerald-700" />
+                <h4 className="text-sm font-bold text-gray-900">
+                  Contrôle d'accès et prévention de fraude
+                </h4>
+              </div>
+              <span className="text-xs font-semibold text-gray-500">
+                {relevantAttendances.length} vérification(s)
+              </span>
             </div>
-          )}
+
+            <div className="space-y-3">
+              {/* Stat 1: Scans valides */}
+              <div className="p-3 rounded-xl bg-emerald-50/60 border border-emerald-100 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-emerald-600 text-white flex items-center justify-center">
+                    <Check className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-gray-900">Émargements valides autorisés</p>
+                    <p className="text-[10px] text-gray-500">Badge QR Code conforme et étudiant éligible</p>
+                  </div>
+                </div>
+                <span className="text-xs font-bold font-mono text-emerald-800">
+                  {validPointagesCount}
+                </span>
+              </div>
+
+              {/* Stat 2: Doublons évités */}
+              <div className="p-3 rounded-xl bg-amber-50/60 border border-amber-100 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-amber-600 text-white flex items-center justify-center">
+                    <Clock className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-gray-900">Tentatives de doublon bloquées</p>
+                    <p className="text-[10px] text-gray-500">Étudiant s'étant déjà présenté sur ce créneau</p>
+                  </div>
+                </div>
+                <span className="text-xs font-bold font-mono text-amber-800">
+                  {duplicateAttemptsCount}
+                </span>
+              </div>
+
+              {/* Stat 3: Non-éligibles ou Inconnus */}
+              <div className="p-3 rounded-xl bg-red-50/60 border border-red-100 flex items-center justify-between">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-7 h-7 rounded-lg bg-red-600 text-white flex items-center justify-center">
+                    <XCircle className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <p className="text-xs font-bold text-gray-900">Rejets de conformité</p>
+                    <p className="text-[10px] text-gray-500">Badge suspendu, hors session ou QR non répertorié</p>
+                  </div>
+                </div>
+                <span className="text-xs font-bold font-mono text-red-800">
+                  {ineligibleAttemptsCount}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-gray-100 text-[11px] text-gray-500 flex items-center justify-between">
+            <span>Règle d'unicité : 1 seule ration autorisée par étudiant et par distribution.</span>
+          </div>
         </div>
       </div>
     </div>

@@ -1,12 +1,12 @@
 import React, { useState } from 'react';
 import {
-  Utensils,
   AlertCircle,
   LogOut,
   Clock,
   Download,
   Smartphone,
   ShieldCheck,
+  ShieldAlert,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { UserAccount } from '../../types';
@@ -45,14 +45,18 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
     await signOutUser();
   };
 
-  // If user is authenticated but awaiting approval or suspended
-  if (currentAccount && currentAccount.status !== 'approved') {
+  // If user is authenticated but not approved OR not an admin
+  if (currentAccount && (currentAccount.status !== 'approved' || currentAccount.role !== 'admin')) {
+    const isNonAdmin = currentAccount.role !== 'admin';
+
     return (
       <div className="min-h-screen bg-gray-50 flex flex-col justify-between py-8 px-4 sm:px-6">
         <div className="flex items-center justify-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white shadow-xs">
-            <Utensils className="w-4 h-4" />
-          </div>
+          <img
+            src="/logo.jpg"
+            alt="Logo e-Kaly"
+            className="w-8 h-8 rounded-lg object-cover shadow-xs border border-gray-100"
+          />
           <span className="text-base font-bold text-gray-900 tracking-tight">e-Kaly</span>
         </div>
 
@@ -62,36 +66,57 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           transition={{ duration: 0.25, ease: 'easeOut' }}
           className="bg-white rounded-2xl shadow-xs max-w-md w-full mx-auto p-8 border border-gray-200 text-center"
         >
-          <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4 border border-amber-100">
-            <Clock className="w-6 h-6" />
-          </div>
+          {isNonAdmin ? (
+            <div className="w-12 h-12 rounded-xl bg-red-50 text-red-600 flex items-center justify-center mx-auto mb-4 border border-red-100">
+              <ShieldAlert className="w-6 h-6" />
+            </div>
+          ) : (
+            <div className="w-12 h-12 rounded-xl bg-amber-50 text-amber-600 flex items-center justify-center mx-auto mb-4 border border-amber-100">
+              <Clock className="w-6 h-6" />
+            </div>
+          )}
 
           <h2 className="text-lg font-bold text-gray-900 mb-2">
-            {currentAccount.status === 'pending'
+            {isNonAdmin
+              ? 'Accès réservé aux administrateurs'
+              : currentAccount.status === 'pending'
               ? 'Compte en attente de validation'
               : currentAccount.status === 'suspended'
               ? 'Compte suspendu'
               : 'Accès non autorisé'}
           </h2>
 
-          <p className="text-xs text-gray-600 mb-6 leading-relaxed">
-            {currentAccount.status === 'pending' && (
-              <>
+          <div className="text-xs text-gray-600 mb-6 leading-relaxed">
+            {isNonAdmin ? (
+              <p>
+                La console Web e-Kaly est exclusivement réservée aux comptes administrateurs. Votre compte (
+                <strong className="text-gray-900 font-semibold">{currentAccount.email}</strong>
+                ) dispose du rôle « Pointeur ». Pour effectuer les pointages et émargements sur le terrain, veuillez installer l'application mobile Android.
+              </p>
+            ) : currentAccount.status === 'pending' ? (
+              <p>
                 Votre demande avec l'adresse <strong className="text-gray-900 font-semibold">{currentAccount.email}</strong> a bien été enregistrée.
                 Un administrateur doit approuver votre compte et vous assigner à une session avant que vous ne puissiez accéder à la plateforme.
-              </>
-            )}
-            {currentAccount.status === 'suspended' && (
-              <>
+              </p>
+            ) : currentAccount.status === 'suspended' ? (
+              <p>
                 L'accès associé à <strong>{currentAccount.email}</strong> est actuellement suspendu. Veuillez contacter les responsables du voyage d'études de l'ENI.
-              </>
+              </p>
+            ) : (
+              <p>Cette adresse email ne dispose pas des autorisations requises pour ce voyage d'études.</p>
             )}
-            {currentAccount.status === 'rejected' && (
-              <>
-                Cette adresse email ne dispose pas des autorisations requises pour ce voyage d'études.
-              </>
-            )}
-          </p>
+          </div>
+
+          {isNonAdmin && (
+            <a
+              href="/app-release.apk"
+              download="e-kaly-release.apk"
+              className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-colors mb-3"
+            >
+              <Smartphone className="w-4 h-4" />
+              Télécharger l'application mobile Android
+            </a>
+          )}
 
           <button
             onClick={handleSignOut}
@@ -114,12 +139,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
       {/* Discreet Header */}
       <header className="max-w-4xl mx-auto w-full flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center text-white shadow-xs">
-            <Utensils className="w-4 h-4" />
-          </div>
+          <img
+            src="/logo.jpg"
+            alt="Logo e-Kaly"
+            className="w-9 h-9 rounded-xl object-cover shadow-xs border border-gray-100"
+          />
           <div>
             <span className="text-base font-bold text-gray-900 tracking-tight leading-none">e-Kaly</span>
-            <p className="text-[11px] text-gray-500 font-medium">Voyage d'études M1 ENI</p>
+            <p className="text-[11px] text-gray-500 font-medium">Portail de gestion des distributions</p>
           </div>
         </div>
 
@@ -130,7 +157,7 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           title="Télécharger l'APK mobile pour pointeurs"
         >
           <Smartphone className="w-3.5 h-3.5 text-emerald-600" />
-          <span className="hidden sm:inline">App mobile Android</span>
+          <span className="hidden sm:inline">Application mobile Android</span>
           <span className="sm:hidden">App Android</span>
           <Download className="w-3.5 h-3.5 text-gray-400" />
         </a>
@@ -145,12 +172,14 @@ export const AuthScreen: React.FC<AuthScreenProps> = ({
           className="bg-white rounded-2xl border border-gray-200 shadow-xs p-6 sm:p-8"
         >
           <div className="text-center mb-6">
-            <div className="w-12 h-12 rounded-xl bg-emerald-50 text-emerald-700 flex items-center justify-center mx-auto mb-3.5 border border-emerald-100">
-              <Utensils className="w-6 h-6" />
-            </div>
-            <h1 className="text-xl font-bold text-gray-900">Connexion administration</h1>
+            <img
+              src="/logo.jpg"
+              alt="Logo e-Kaly"
+              className="w-14 h-14 rounded-2xl object-cover shadow-xs mx-auto mb-3.5 border border-gray-100"
+            />
+            <h1 className="text-xl font-bold text-gray-900">Console d'administration</h1>
             <p className="text-xs text-gray-500 mt-1.5 leading-relaxed">
-              Gestion de la restauration, suivi des distributions et pointages des étudiants de l'ENI
+              Supervision de la restauration, planification des repas et suivi des pointages
             </p>
           </div>
 
