@@ -27,6 +27,9 @@ export function subscribeToUserAccounts(
           requestedAt: data.requestedAt || new Date().toISOString(),
           updatedAt: data.updatedAt,
           updatedBy: data.updatedBy,
+          assignedSessionId: data.assignedSessionId || data.sessionId || null,
+          assignedSessionNom: data.assignedSessionNom || data.sessionNom || null,
+          sessionId: data.assignedSessionId || data.sessionId || null,
         };
       });
 
@@ -50,6 +53,8 @@ export async function updateAccount(
   updates: {
     status?: AccountStatus;
     role?: UserRole;
+    assignedSessionId?: string | null;
+    assignedSessionNom?: string | null;
   },
   adminInfo: {
     uid: string;
@@ -61,11 +66,17 @@ export async function updateAccount(
   const now = new Date().toISOString();
 
   try {
-    const payload: Partial<UserAccount> = {
+    const payload: Record<string, any> = {
       ...updates,
       updatedAt: now,
       updatedBy: adminInfo.uid,
     };
+    if (updates.assignedSessionId !== undefined) {
+      payload.sessionId = updates.assignedSessionId;
+    }
+    if (updates.assignedSessionNom !== undefined) {
+      payload.sessionNom = updates.assignedSessionNom;
+    }
     await updateDoc(userRef, payload);
 
     // If role changed to admin or updated, sync with /admins doc

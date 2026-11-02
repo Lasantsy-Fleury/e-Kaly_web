@@ -23,6 +23,12 @@ import {
   recordScan,
   correctAttendanceStatus,
 } from '../../services/attendanceService';
+import {
+  describeDistributionWindow,
+  getEffectiveStatus,
+  getMealIdentity,
+  isDistributionOpen,
+} from '../../services/distributionService';
 
 interface AttendanceViewProps {
   attendances: Attendance[];
@@ -49,12 +55,14 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
   const [showManualScanModal, setShowManualScanModal] = useState(false);
   const [scanMatricule, setScanMatricule] = useState('');
   const [scanDistributionId, setScanDistributionId] = useState(
-    distributions.find((d) => d.statut === 'ongoing')?.id || distributions[0]?.id || ''
+    distributions.find((d) => isDistributionOpen(d))?.id || distributions[0]?.id || ''
   );
-  const [scanRepas, setScanRepas] = useState('Déjeuner');
   const [scanResult, setScanResult] = useState<Attendance | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [isScanning, setIsScanning] = useState(false);
+
+  const scanDistribution = distributions.find((d) => d.id === scanDistributionId);
+  const isScanSlotOpen = !!scanDistribution && isDistributionOpen(scanDistribution);
 
   // Correction Modal
   const [selectedRecordForCorrection, setSelectedRecordForCorrection] = useState<Attendance | null>(null);
@@ -94,6 +102,14 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
     });
   }, [attendances, searchTerm, distributionFilter, statusFilter, mealFilter, pointerFilter]);
 
+  const openManualScanModal = () => {
+    setScanResult(null);
+    setScanError(null);
+    const openDistribution = distributions.find((d) => isDistributionOpen(d));
+    setScanDistributionId(openDistribution?.id || distributions[0]?.id || '');
+    setShowManualScanModal(true);
+  };
+
   const handleManualScan = async (e: React.FormEvent) => {
     e.preventDefault();
     setScanError(null);
@@ -117,13 +133,22 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
       return;
     }
 
+    if (!isDistributionOpen(targetDistribution)) {
+      setScanError(
+        `La distribution "${targetDistribution.nom}" n'est pas ouverte (${describeDistributionWindow(
+          targetDistribution
+        )}). Aucun pointage ne peut être enregistré hors du créneau ouvert.`
+      );
+      return;
+    }
+
     setIsScanning(true);
     try {
       const existingForDist = attendances.filter((a) => a.distributionId === scanDistributionId);
       const res = await recordScan({
         student: targetStudent,
         distribution: targetDistribution,
-        repasProduit: scanRepas,
+        repasProduit: getMealIdentity(targetDistribution),
         pointeurId: currentAccount?.uid || 'admin_web',
         pointeurNom: currentAccount?.displayName || 'Administrateur e-Kaly',
         pointeurEmail: currentAccount?.email,
@@ -242,11 +267,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
 
           <button
             type="button"
-            onClick={() => {
-              setScanResult(null);
-              setScanError(null);
-              setShowManualScanModal(true);
-            }}
+            onClick={openManualScanModal}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-xs transition-colors shrink-0"
           >
             <Plus className="w-4 h-4" />
@@ -335,7 +356,7 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
           title="Aucun pointage enregistré"
           description="Les pointages apparaîtront ici dès que les pointeurs scanneront les badges étudiants depuis l'application mobile ou que vous en enregistrerez un manuellement."
           actionLabel="Enregistrer un premier pointage"
-          onAction={() => setShowManualScanModal(true)}
+          onAction={openManualScanModal}
         />
       ) : filteredAttendances.length === 0 ? (
         <div className="bg-white p-12 text-center rounded-xl border border-gray-200">
@@ -464,6 +485,17 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </div>
               )}
 
+              {scanDistribution && !isScanSlotOpen && (
+                <div className="p-3 bg-amber-50 border border-amber-200 text-amber-900 text-xs rounded-xl flex items-start gap-2">
+                  <Clock className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <span>
+                    Cette distribution n'est pas ouverte. Le pointage est autorisé uniquement
+                    pendant le créneau {describeDistributionWindow(scanDistribution)} et lorsque la
+                    distribution est marquée « En cours ».
+                  </span>
+                </div>
+              )}
+
               {scanResult && (
                 <div
                   className={`p-3.5 rounded-xl border text-xs ${
@@ -526,43 +558,33 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                     value={scanDistributionId}
                     onChange={(e) => {
                       setScanDistributionId(e.target.value);
-                      const selected = distributions.find((d) => d.id === e.target.value);
-                      if (selected && selected.repasProduits.length > 0) {
-                        setScanRepas(selected.repasProduits[0]);
-                      }
                     }}
                     className="w-full text-xs px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
                     required
                   >
-                    {distributions.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.nom} ({d.date} • {d.statut})
-                      </option>
-                    ))}
+                    {distributions.map((d) => {
+                      const open = isDistributionOpen(d);
+                      return (
+                        <option key={d.id} value={d.id}>
+                          {open ? '● ' : '○ '}
+                          {d.nom} ({d.date} • {getEffectiveStatus(d)}){open ? ' — ouverte' : ''}
+                        </option>
+                      );
+                    })}
                   </select>
                 )}
               </div>
 
               <div>
                 <label className="block text-xs font-bold text-gray-700 mb-1">
-                  Repas ou Produit distribué <span className="text-red-500">*</span>
+                  Repas concerné
                 </label>
-                <select
-                  value={scanRepas}
-                  onChange={(e) => setScanRepas(e.target.value)}
-                  className="w-full text-xs px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500 bg-white"
-                  required
-                >
-                  {(
-                    distributions.find((d) => d.id === scanDistributionId)?.repasProduits || [
-                      'Déjeuner',
-                    ]
-                  ).map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                </select>
+                <div className="w-full text-xs px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-800 font-semibold">
+                  {scanDistribution ? getMealIdentity(scanDistribution) : '—'}
+                </div>
+                <p className="text-[11px] text-gray-500 mt-1">
+                  Identité du repas utilisée pour détecter les doublons Web / Mobile.
+                </p>
               </div>
 
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-gray-100">
@@ -575,7 +597,12 @@ export const AttendanceView: React.FC<AttendanceViewProps> = ({
                 </button>
                 <button
                   type="submit"
-                  disabled={isScanning || distributions.length === 0 || students.length === 0}
+                  disabled={
+                    isScanning ||
+                    distributions.length === 0 ||
+                    students.length === 0 ||
+                    !isScanSlotOpen
+                  }
                   className="px-5 py-2 text-xs font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg shadow-xs disabled:opacity-50"
                 >
                   {isScanning ? 'Vérification...' : 'Valider le pointage'}

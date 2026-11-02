@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -15,7 +15,7 @@ import {
 } from './services/authService';
 import { subscribeToSessions } from './services/sessionService';
 import { subscribeToStudents, deleteStudent } from './services/studentService';
-import { subscribeToDistributions, deleteDistribution } from './services/distributionService';
+import { subscribeToDistributions, deleteDistribution, closeExpiredDistributions } from './services/distributionService';
 import { subscribeToAttendance } from './services/attendanceService';
 import {
   subscribeToUserAccounts,
@@ -115,7 +115,9 @@ export default function App() {
       subscribeToSessions(
         (data) => {
           setSessions(data);
-          if (data.length === 0) {
+          if (currentAccount.role === 'pointer' && currentAccount.assignedSessionId) {
+            setSelectedSessionId(currentAccount.assignedSessionId);
+          } else if (data.length === 0) {
             setSelectedSessionId('all');
           } else if (selectedSessionId === 'all') {
             const ongoing = data.find((s) => s.statut === 'ongoing') || data[0];
@@ -198,6 +200,36 @@ export default function App() {
     };
   }, [currentUser, currentAccount]);
 
+  // 3. Auto-close distributions as soon as their time slot ends.
+  //    Cloud Functions are not available on this project, so the admin Web
+  //    session performs the closure; the mobile app does the same on the field.
+  useEffect(() => {
+    if (!currentUser || !currentAccount || currentAccount.status !== 'approved') return;
+    if (currentAccount.role !== 'admin') return;
+
+    const tick = () => {
+      closeExpiredDistributions(distributions).catch((error) =>
+        console.error('Auto-close distributions error:', error)
+      );
+    };
+
+    tick();
+    const intervalId = window.setInterval(tick, 30000);
+    return () => window.clearInterval(intervalId);
+  }, [currentUser, currentAccount, distributions]);
+
+  const isPointerUser = currentAccount?.role === 'pointer';
+  const pointerSessionId = isPointerUser ? currentAccount?.assignedSessionId : null;
+
+  // Pointers only see distributions of their assigned session
+  const visibleDistributions = useMemo(() => {
+    if (isPointerUser) {
+      if (!pointerSessionId) return [];
+      return distributions.filter((d) => d.sessionId === pointerSessionId);
+    }
+    return distributions;
+  }, [distributions, isPointerUser, pointerSessionId]);
+
   // Loading Screen
   if (authLoading) {
     return (
@@ -276,16 +308,20 @@ export default function App() {
                 {activeTab === 'dashboard' && (
                   <DashboardView
                     students={students}
-                    distributions={distributions}
+                    distributions={visibleDistributions}
                     attendances={attendances}
                     sessions={sessions}
-                    selectedSessionId={selectedSessionId}
+                    selectedSessionId={
+                      isPointerUser && pointerSessionId ? pointerSessionId : selectedSessionId
+                    }
                     onSelectSessionId={(id) => setSelectedSessionId(id)}
                     onNavigateToTab={(tab) => setActiveTab(tab)}
                     onOpenSessionModal={() => {
                       setEditingSession(null);
                       setShowSessionModal(true);
                     }}
+                    accounts={accounts}
+                    currentAccount={currentAccount}
                   />
                 )}
 
@@ -293,9 +329,11 @@ export default function App() {
                   <SessionsView
                     sessions={sessions}
                     students={students}
-                    distributions={distributions}
+                    distributions={visibleDistributions}
                     attendances={attendances}
-                    selectedSessionId={selectedSessionId}
+                    selectedSessionId={
+                      isPointerUser && pointerSessionId ? pointerSessionId : selectedSessionId
+                    }
                     onSelectSessionId={(id) => setSelectedSessionId(id)}
                     onNavigateToTab={(tab) => setActiveTab(tab)}
                     onOpenSessionModal={() => {
@@ -313,7 +351,9 @@ export default function App() {
                   <StudentsView
                     students={students}
                     sessions={sessions}
-                    selectedSessionId={selectedSessionId}
+                    selectedSessionId={
+                      isPointerUser && pointerSessionId ? pointerSessionId : selectedSessionId
+                    }
                     onSelectSessionId={(id) => setSelectedSessionId(id)}
                     onOpenSessionModal={() => {
                       setEditingSession(null);
@@ -324,11 +364,13 @@ export default function App() {
 
                 {activeTab === 'distributions' && (
                   <DistributionsView
-                    distributions={distributions}
+                    distributions={visibleDistributions}
                     students={students}
                     attendances={attendances}
                     sessions={sessions}
-                    selectedSessionId={selectedSessionId}
+                    selectedSessionId={
+                      isPointerUser && pointerSessionId ? pointerSessionId : selectedSessionId
+                    }
                     onSelectSessionId={(id) => setSelectedSessionId(id)}
                     onOpenSessionModal={() => {
                       setEditingSession(null);
@@ -340,7 +382,7 @@ export default function App() {
                 {activeTab === 'attendance' && (
                   <AttendanceView
                     attendances={attendances}
-                    distributions={distributions}
+                    distributions={visibleDistributions}
                     students={students}
                     currentAccount={currentAccount}
                   />
@@ -351,6 +393,7 @@ export default function App() {
                     accounts={accounts}
                     auditLogs={auditLogs}
                     currentAccount={currentAccount}
+                    sessions={sessions}
                   />
                 )}
               </motion.div>

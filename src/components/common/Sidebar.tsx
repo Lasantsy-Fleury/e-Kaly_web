@@ -66,12 +66,16 @@ export const Sidebar: React.FC<SidebarProps> = ({
       label: 'Pointages',
       icon: QrCode,
     },
-    {
-      id: 'accounts' as NavTab,
-      label: 'Comptes & pointeurs',
-      icon: ShieldCheck,
-      badge: pendingRequestsCount > 0 ? pendingRequestsCount : undefined,
-    },
+    ...(currentAccount?.role === 'admin'
+      ? [
+          {
+            id: 'accounts' as NavTab,
+            label: 'Comptes & pointeurs',
+            icon: ShieldCheck,
+            badge: pendingRequestsCount > 0 ? pendingRequestsCount : undefined,
+          },
+        ]
+      : []),
   ];
 
   const handleTabClick = (id: NavTab) => {

@@ -13,7 +13,7 @@ import {
   Utensils,
   AlertCircle,
 } from 'lucide-react';
-import { Attendance, Distribution, Session, Student } from '../../types';
+import { Attendance, Distribution, Session, Student, UserAccount } from '../../types';
 import { motion } from 'motion/react';
 import { EmptyState } from '../common/EmptyState';
 import { exportAttendanceToExcel } from '../../services/attendanceService';
@@ -27,6 +27,8 @@ interface DashboardViewProps {
   onSelectSessionId: (id: string) => void;
   onNavigateToTab: (tab: any) => void;
   onOpenSessionModal: () => void;
+  accounts?: UserAccount[];
+  currentAccount?: UserAccount | null;
 }
 
 export const DashboardView: React.FC<DashboardViewProps> = ({
@@ -38,22 +40,58 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
   onSelectSessionId,
   onNavigateToTab,
   onOpenSessionModal,
+  accounts = [],
+  currentAccount,
 }) => {
   const [selectedDistributionId, setSelectedDistributionId] = useState<string>('all');
+  const [selectedPointerId, setSelectedPointerId] = useState<string>('all');
 
-  const activeSession = sessions.find((s) => s.id === selectedSessionId);
+  const isPointerRole = currentAccount?.role === 'pointer';
+  const assignedSessionId = isPointerRole ? currentAccount?.assignedSessionId : null;
+  const effectiveSessionId = assignedSessionId || selectedSessionId;
 
-  // Filter students by selected session
+  const activeSession = sessions.find((s) => s.id === effectiveSessionId);
+
+  // Available pointer accounts for filtering
+  const availablePointers = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; email?: string }>();
+    if (accounts && accounts.length > 0) {
+      accounts
+        .filter((acc) => acc.role === 'pointer' && acc.status === 'approved')
+        .forEach((acc) => {
+          map.set(acc.uid, {
+            id: acc.uid,
+            name: acc.displayName || acc.email,
+            email: acc.email,
+          });
+        });
+    }
+    // Also include pointers discovered from attendances
+    attendances.forEach((a) => {
+      if (a.pointeurId && !map.has(a.pointeurId)) {
+        map.set(a.pointeurId, {
+          id: a.pointeurId,
+          name: a.pointeurNom || a.pointeurId,
+          email: a.pointeurEmail,
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name));
+  }, [accounts, attendances]);
+
+  // Filter students by effective session
   const sessionStudents = useMemo(() => {
-    if (selectedSessionId === 'all') return students;
-    return students.filter((s) => s.sessionId === selectedSessionId);
-  }, [students, selectedSessionId]);
+    if (isPointerRole && !assignedSessionId) return [];
+    if (effectiveSessionId === 'all') return students;
+    return students.filter((s) => s.sessionId === effectiveSessionId);
+  }, [students, effectiveSessionId, isPointerRole, assignedSessionId]);
 
-  // Filter distributions by selected session
+  // Filter distributions by effective session
   const sessionDistributions = useMemo(() => {
-    if (selectedSessionId === 'all') return distributions;
-    return distributions.filter((d) => d.sessionId === selectedSessionId);
-  }, [distributions, selectedSessionId]);
+    if (isPointerRole && !assignedSessionId) return [];
+    if (effectiveSessionId === 'all') return distributions;
+    return distributions.filter((d) => d.sessionId === effectiveSessionId);
+  }, [distributions, effectiveSessionId, isPointerRole, assignedSessionId]);
 
   // Status counts
   const plannedDistCount = useMemo(
@@ -69,18 +107,32 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
     [sessionDistributions]
   );
 
-  // Filtered attendances based on session and selected distribution
+  // Filtered attendances based on session, selected distribution, and selected pointer
   const relevantAttendances = useMemo(() => {
+    if (isPointerRole && !assignedSessionId) return [];
     let list = attendances;
-    if (selectedSessionId !== 'all') {
+    if (effectiveSessionId !== 'all') {
       const distIdsInSession = new Set(sessionDistributions.map((d) => d.id));
-      list = list.filter((a) => distIdsInSession.has(a.distributionId) || a.sessionId === selectedSessionId);
+      list = list.filter((a) => distIdsInSession.has(a.distributionId) || a.sessionId === effectiveSessionId);
     }
     if (selectedDistributionId !== 'all') {
       list = list.filter((a) => a.distributionId === selectedDistributionId);
     }
+    if (selectedPointerId !== 'all') {
+      list = list.filter(
+        (a) => a.pointeurId === selectedPointerId || a.pointeurNom === selectedPointerId
+      );
+    }
     return list;
-  }, [attendances, selectedSessionId, selectedDistributionId, sessionDistributions]);
+  }, [
+    attendances,
+    effectiveSessionId,
+    selectedDistributionId,
+    selectedPointerId,
+    sessionDistributions,
+    isPointerRole,
+    assignedSessionId,
+  ]);
 
   const validPointagesCount = useMemo(
     () => relevantAttendances.filter((a) => a.statut === 'valid').length,
@@ -151,6 +203,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
 
   return (
     <div className="space-y-6">
+      {/* Pointer Session Warning or Info Banner */}
+      {isPointerRole && !assignedSessionId && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center gap-3 text-xs text-red-900 shadow-xs">
+          <AlertCircle className="w-5 h-5 text-red-600 shrink-0" />
+          <div>
+            <strong className="font-bold">Compte pointeur non assigné :</strong> Votre compte n'est actuellement assigné à aucune session de voyage. Conformément aux règles de sécurité, vous ne pouvez voir que les distributions associées à votre session de voyage assignée. Veuillez contacter votre administrateur.
+          </div>
+        </div>
+      )}
+
+      {isPointerRole && assignedSessionId && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 flex items-center justify-between gap-3 text-xs text-emerald-950 shadow-xs">
+          <div className="flex items-center gap-2">
+            <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
+            <span>
+              Espace Pointeur restreint à la session : <strong>{currentAccount?.assignedSessionNom || activeSession?.nom || 'Voyage d’études'}</strong>
+            </span>
+          </div>
+          <span className="text-[11px] font-semibold text-emerald-700 bg-emerald-100/80 px-2 py-0.5 rounded-full">
+            {sessionDistributions.length} distribution(s) autorisée(s)
+          </span>
+        </div>
+      )}
+
       {/* Session Banner and Filter Toolbar */}
       <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-xs flex flex-wrap items-center justify-between gap-4">
         <div className="flex flex-wrap items-center gap-3">
@@ -160,13 +236,19 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
 
           <select
-            value={selectedSessionId}
-            onChange={(e) => onSelectSessionId(e.target.value)}
-            className="px-3 py-1.5 text-xs font-bold border border-emerald-300 rounded-lg bg-emerald-50/50 text-emerald-950 focus:outline-none focus:ring-2 focus:ring-green-500"
+            value={effectiveSessionId}
+            disabled={isPointerRole && !!assignedSessionId}
+            onChange={(e) => {
+              onSelectSessionId(e.target.value);
+              setSelectedDistributionId('all');
+            }}
+            className="px-3 py-1.5 text-xs font-bold border border-emerald-300 rounded-lg bg-emerald-50/50 text-emerald-950 focus:outline-none focus:ring-2 focus:ring-green-500 disabled:opacity-80"
           >
-            <option value="all">
-              {sessions.length === 0 ? 'Aucune session enregistrée' : 'Toutes les sessions de voyage'}
-            </option>
+            {!isPointerRole && (
+              <option value="all">
+                {sessions.length === 0 ? 'Aucune session enregistrée' : 'Toutes les sessions de voyage'}
+              </option>
+            )}
             {sessions.map((sess) => (
               <option key={sess.id} value={sess.id}>
                 {sess.nom} ({sess.destination ? `${sess.destination} • ` : ''}{sess.dateDebut} au {sess.dateFin})
@@ -174,6 +256,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
             ))}
           </select>
 
+          {/* Distribution Filter */}
           <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
             <label htmlFor="dist-select" className="text-xs font-medium text-gray-700">
               Distribution :
@@ -182,7 +265,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               id="dist-select"
               value={selectedDistributionId}
               onChange={(e) => setSelectedDistributionId(e.target.value)}
-              className="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg bg-white text-gray-800"
+              className="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500"
             >
               <option value="all">
                 {sessionDistributions.length === 0 ? 'Aucune distribution' : `Toutes les distributions (${sessionDistributions.length})`}
@@ -194,15 +277,42 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
               ))}
             </select>
           </div>
+
+          {/* Pointer Account Filter */}
+          <div className="flex items-center gap-2 pl-2 border-l border-gray-200">
+            <label htmlFor="pointer-select" className="text-xs font-medium text-gray-700 flex items-center gap-1">
+              <Users className="w-3.5 h-3.5 text-gray-500" />
+              Compte pointeur :
+            </label>
+            <select
+              id="pointer-select"
+              value={selectedPointerId}
+              onChange={(e) => setSelectedPointerId(e.target.value)}
+              className="px-3 py-1.5 text-xs font-medium border border-gray-300 rounded-lg bg-white text-gray-800 focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
+              <option value="all">
+                {availablePointers.length === 0
+                  ? 'Tous les pointeurs'
+                  : `Tous les comptes pointeurs (${availablePointers.length})`}
+              </option>
+              {availablePointers.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} {p.email ? `(${p.email})` : ''}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
 
         <div className="flex items-center gap-2">
-          <button
-            onClick={() => onNavigateToTab('sessions')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-200 rounded-lg transition-colors"
-          >
-            <span>Gérer les sessions</span>
-          </button>
+          {!isPointerRole && (
+            <button
+              onClick={() => onNavigateToTab('sessions')}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-gray-700 bg-gray-100 hover:bg-gray-200 border border-gray-200 rounded-lg transition-colors"
+            >
+              <span>Gérer les sessions</span>
+            </button>
+          )}
           <button
             onClick={() =>
               exportAttendanceToExcel(
@@ -219,7 +329,7 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
       </div>
 
       {/* Empty Sessions Notice */}
-      {sessions.length === 0 && (
+      {!isPointerRole && sessions.length === 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-amber-900 shadow-xs">
           <div className="flex items-center gap-2.5">
             <AlertCircle className="w-5 h-5 text-amber-600 shrink-0" />
@@ -293,25 +403,30 @@ export const DashboardView: React.FC<DashboardViewProps> = ({
           </div>
         </div>
 
-        {/* Valid Pointages */}
+        {/* Valid Pointages / Pointages effectués (filtré par distribution et par compte pointeur) */}
         <div className="bg-white p-5 rounded-xl border border-gray-200 shadow-xs">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-medium uppercase tracking-wider text-gray-500">
-              Pointages Valides
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-700">
+              Pointages effectués
             </span>
             <div className="w-8 h-8 rounded-lg bg-green-50 text-green-700 flex items-center justify-center">
               <CheckCircle2 className="w-4 h-4" />
             </div>
           </div>
           <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-2xl font-bold text-gray-900">{validPointagesCount}</span>
-            <span className="text-xs text-gray-500">repas servis</span>
+            <span className="text-2xl font-bold text-green-700">{validPointagesCount}</span>
+            <span className="text-xs text-gray-500">repas servis valides</span>
           </div>
-          <div className="mt-3 text-xs text-gray-500 flex items-center justify-between pt-2 border-t border-gray-100">
-            <span>Doublons & Rejets :</span>
-            <span className={`font-semibold ${anomaliesCount > 0 ? 'text-amber-700' : 'text-gray-600'}`}>
-              {anomaliesCount} détecté(s)
-            </span>
+          <div className="mt-3 text-xs text-gray-500 flex flex-col gap-1 pt-2 border-t border-gray-100">
+            <div className="flex items-center justify-between text-[11px]">
+              <span className="truncate font-medium text-gray-600">
+                {selectedDistributionId !== 'all' ? '1 distribution ciblée' : 'Toutes distributions'}
+                {selectedPointerId !== 'all' ? ' • 1 compte pointeur' : ''}
+              </span>
+              <span className={`font-semibold shrink-0 ${anomaliesCount > 0 ? 'text-amber-700' : 'text-gray-500'}`}>
+                {anomaliesCount} rejet(s)
+              </span>
+            </div>
           </div>
         </div>
 

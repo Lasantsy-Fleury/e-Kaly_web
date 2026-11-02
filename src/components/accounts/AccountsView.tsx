@@ -11,7 +11,7 @@ import {
   History,
   Lock,
 } from 'lucide-react';
-import { AccountStatus, AuditLog, UserAccount, UserRole } from '../../types';
+import { AccountStatus, AuditLog, Session, UserAccount, UserRole } from '../../types';
 import { EmptyState } from '../common/EmptyState';
 import { useConfirm } from '../common/ConfirmModal';
 import { updateAccount } from '../../services/accountService';
@@ -20,12 +20,14 @@ interface AccountsViewProps {
   accounts: UserAccount[];
   auditLogs: AuditLog[];
   currentAccount: UserAccount | null;
+  sessions: Session[];
 }
 
 export const AccountsView: React.FC<AccountsViewProps> = ({
   accounts,
   auditLogs,
   currentAccount,
+  sessions,
 }) => {
   const { confirm: customConfirm, alert: customAlert } = useConfirm();
   const [searchTerm, setSearchTerm] = useState('');
@@ -112,6 +114,34 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
     } catch (err) {
       await customAlert({
         title: 'Erreur de mise à jour',
+        message: err instanceof Error ? err.message : String(err),
+        variant: 'error',
+      });
+      setUpdatingUid(null);
+    }
+  };
+
+  const handleAssignSession = async (target: UserAccount, newSessionId: string) => {
+    if (!currentAccount) return;
+    const targetSession = sessions.find((s) => s.id === newSessionId);
+    setUpdatingUid(target.uid);
+    try {
+      await updateAccount(
+        target.uid,
+        {
+          assignedSessionId: newSessionId || null,
+          assignedSessionNom: targetSession ? targetSession.nom : null,
+        },
+        {
+          uid: currentAccount.uid,
+          displayName: currentAccount.displayName || 'Administrateur',
+          email: currentAccount.email,
+        }
+      );
+      setUpdatingUid(null);
+    } catch (err) {
+      await customAlert({
+        title: "Erreur d'assignation de session",
         message: err instanceof Error ? err.message : String(err),
         variant: 'error',
       });
@@ -245,6 +275,7 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                 <tr>
                   <th className="px-4 py-3">Utilisateur</th>
                   <th className="px-4 py-3">Rôle attribué</th>
+                  <th className="px-4 py-3">Session assignée</th>
                   <th className="px-4 py-3">Statut actuel</th>
                   <th className="px-4 py-3">Demande & Mise à jour</th>
                   <th className="px-4 py-3 text-right">Actions d'administration</th>
@@ -280,6 +311,43 @@ export const AccountsView: React.FC<AccountsViewProps> = ({
                         >
                           {acc.role === 'admin' ? 'Administrateur' : 'Pointeur'}
                         </span>
+                      </td>
+
+                      <td className="px-4 py-3">
+                        {acc.role === 'pointer' ? (
+                          <div className="flex flex-col gap-1 min-w-[180px]">
+                            <select
+                              value={acc.assignedSessionId || ''}
+                              disabled={updatingUid === acc.uid}
+                              onChange={(e) => handleAssignSession(acc, e.target.value)}
+                              className={`text-xs border rounded-lg px-2.5 py-1 font-medium transition-colors ${
+                                acc.assignedSessionId
+                                  ? 'border-emerald-300 bg-emerald-50 text-emerald-950 font-semibold focus:ring-2 focus:ring-green-500'
+                                  : 'border-amber-300 bg-amber-50/60 text-amber-900 focus:ring-2 focus:ring-amber-500'
+                              }`}
+                            >
+                              <option value="">Non assigné à une session</option>
+                              {sessions.map((sess) => (
+                                <option key={sess.id} value={sess.id}>
+                                  {sess.nom} ({sess.destination ? `${sess.destination} • ` : ''}{sess.statut})
+                                </option>
+                              ))}
+                            </select>
+                            {acc.assignedSessionId ? (
+                              <span className="text-[10px] text-emerald-700 font-medium">
+                                Visualisation restreinte aux distributions de cette session
+                              </span>
+                            ) : (
+                              <span className="text-[10px] text-amber-600 font-medium">
+                                Doit être assigné pour voir ses distributions
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-gray-400 text-[11px] italic">
+                            Accès global (toutes les sessions)
+                          </span>
+                        )}
                       </td>
 
                       <td className="px-4 py-3">{getStatusBadge(acc.status)}</td>

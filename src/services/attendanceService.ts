@@ -4,10 +4,16 @@ import {
   setDoc,
   updateDoc,
   onSnapshot,
+  getDoc,
 } from 'firebase/firestore';
 import * as XLSX from 'xlsx';
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Attendance, AttendanceStatus, Distribution, Student } from '../types';
+import {
+  describeDistributionWindow,
+  getMealIdentity,
+  isDistributionOpen,
+} from './distributionService';
 
 export function subscribeToAttendance(
   onUpdate: (records: Attendance[]) => void,
@@ -116,52 +122,147 @@ export interface RecordScanInput {
   existingAttendancesForDistribution: Attendance[];
 }
 
+const MAX_DOC_ID_LENGTH = 120;
+
+/** Mirrors the sanitisation used by the mobile app for idempotency keys. */
+export function sanitizeForDocId(value: string): string {
+  return String(value ?? '')
+    .replace(/[^a-zA-Z0-9_\-.]/g, '_')
+    .slice(0, MAX_DOC_ID_LENGTH);
+}
+
+/**
+ * Deterministic attendance id shared by Web and Mobile. Using the canonical
+ * meal identity (distribution type) instead of a product label guarantees the
+ * same document is targeted from both clients, so repeated scans cannot create
+ * duplicate pointages.
+ */
+export function buildAttendanceId(
+  distributionId: string,
+  matricule: string,
+  mealIdentity: string
+): string {
+  return sanitizeForDocId(`${distributionId}_${matricule}_${mealIdentity}`);
+}
+
+function timestampToIso(value: any, fallback: string): string {
+  if (!value) return fallback;
+  if (typeof value === 'string') return value;
+  if (typeof value?.toDate === 'function') {
+    try {
+      return value.toDate().toISOString();
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+function mapAttendanceSnapshot(id: string, data: any, fallback: string): Attendance {
+  return {
+    id,
+    sessionId: data.sessionId,
+    matricule: data.matricule || data.studentMatricule || '',
+    studentId: data.studentId || data.matricule,
+    studentNomComplet: data.studentNomComplet || data.studentName || '',
+    distributionId: data.distributionId || '',
+    distributionNom: data.distributionNom || data.distributionName || '',
+    repasProduit: data.repasProduit || data.mealType || 'Repas',
+    scannedAt: timestampToIso(data.scannedAt, fallback),
+    syncedAt: timestampToIso(data.syncedAt || data.createdAt, fallback),
+    pointeurId: data.pointeurId || data.pointerId || '',
+    pointeurNom: data.pointeurNom || data.pointerName || '',
+    pointeurEmail: data.pointeurEmail || '',
+    statut: (data.statut as AttendanceStatus) || 'valid',
+    anomalie: data.anomalie,
+    createdAt: data.createdAt,
+  };
+}
+
 export async function recordScan(input: RecordScanInput): Promise<Attendance> {
   const {
     student,
     distribution,
-    repasProduit,
     pointeurId,
     pointeurNom,
     pointeurEmail,
     existingAttendancesForDistribution,
   } = input;
 
-  const now = new Date().toISOString();
-  const newId = `att_${Date.now()}_${student.matricule}_${Math.random().toString(36).substring(2, 6)}`;
-  const docRef = doc(db, 'attendance', newId);
+  // Authoritative client-side gate: no pointage outside of an open slot.
+  // The Firestore rules enforce the same condition server-side.
+  if (!isDistributionOpen(distribution)) {
+    throw new Error(
+      `La distribution "${distribution.nom}" n'est pas ouverte (${describeDistributionWindow(
+        distribution
+      )}). Aucun pointage ne peut être enregistré.`
+    );
+  }
 
-  // Check 1: Duplicate check (Has student already scanned for this distribution and meal product?)
-  const duplicate = existingAttendancesForDistribution.find(
+  const now = new Date().toISOString();
+  const meal = getMealIdentity(distribution);
+  const attendanceId = buildAttendanceId(distribution.id, student.matricule, meal);
+  const docRef = doc(db, 'attendance', attendanceId);
+
+  // Check 1: legacy duplicates (records created before deterministic ids).
+  const legacyDuplicate = existingAttendancesForDistribution.find(
     (att) =>
+      att.statut === 'valid' &&
       att.matricule === student.matricule &&
-      att.repasProduit === repasProduit &&
-      att.statut === 'valid'
+      att.id !== attendanceId &&
+      (att.repasProduit === meal || (distribution.repasProduits || []).includes(att.repasProduit))
   );
+
+  // Check 2: deterministic document already exists (cross-device scan).
+  let deterministicDuplicate: Attendance | undefined;
+  try {
+    const existingSnapshot = await getDoc(docRef);
+    if (existingSnapshot.exists()) {
+      const existing = mapAttendanceSnapshot(
+        existingSnapshot.id,
+        existingSnapshot.data() || {},
+        now
+      );
+      if (existing.statut === 'valid') deterministicDuplicate = existing;
+    }
+  } catch (error) {
+    console.warn('Unable to pre-read attendance document:', error);
+  }
+
+  const duplicate = deterministicDuplicate || legacyDuplicate;
 
   let statut: AttendanceStatus = 'valid';
   let anomalie: string | undefined = undefined;
 
   if (duplicate) {
     statut = 'duplicate_attempt';
-    anomalie = `Déjà pointé à ${new Date(duplicate.scannedAt).toLocaleTimeString('fr-FR')} par ${duplicate.pointeurNom || 'un pointeur'}`;
-  } else {
-    // Check 2: Session validation (Student must be enrolled in the distribution's voyage session)
-    if (distribution.sessionId && student.sessionId && student.sessionId !== distribution.sessionId) {
-      statut = 'ineligible';
-      anomalie = `Étudiant non inscrit à la session de voyage "${distribution.sessionNom || distribution.sessionId}"`;
-    }
+    const time = new Date(duplicate.scannedAt).toLocaleTimeString('fr-FR');
+    anomalie = `Déjà pointé à ${time} par ${duplicate.pointeurNom || 'un pointeur'}`;
+  } else if (distribution.sessionId && student.sessionId && student.sessionId !== distribution.sessionId) {
+    // Check 3: Session validation (Student must be enrolled in the voyage session)
+    statut = 'ineligible';
+    anomalie = `Étudiant non inscrit à la session de voyage "${distribution.sessionNom || distribution.sessionId}"`;
   }
 
-  const record: Attendance = {
-    id: newId,
+  // Only valid pointages use the deterministic id. Anomalies (duplicates,
+  // ineligible students) are stored as separate traceable records so they can
+  // never overwrite a valid pointage.
+  const recordId =
+    statut === 'valid'
+      ? attendanceId
+      : `att_${Date.now()}_${sanitizeForDocId(student.matricule).slice(0, 32)}_${Math.random()
+          .toString(36)
+          .substring(2, 6)}`;
+
+  const buildRecord = (id: string): Attendance => ({
+    id,
     sessionId: distribution.sessionId,
     matricule: student.matricule,
     studentId: student.id,
     studentNomComplet: `${student.nom.toUpperCase()} ${student.prenoms || ''}`.trim(),
     distributionId: distribution.id,
     distributionNom: distribution.nom,
-    repasProduit,
+    repasProduit: meal,
     scannedAt: now,
     syncedAt: now,
     pointeurId,
@@ -170,15 +271,44 @@ export async function recordScan(input: RecordScanInput): Promise<Attendance> {
     statut,
     anomalie,
     createdAt: now,
-  };
+  });
+
+  const record = buildRecord(recordId);
 
   try {
-    await setDoc(docRef, record);
+    await setDoc(doc(db, 'attendance', recordId), record);
     return record;
   } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `attendance/${newId}`);
+    const code = (error as { code?: string })?.code;
+
+    // Race lost against another device: the deterministic document now exists
+    // and belongs to another pointer. Never overwrite it, record the attempt.
+    if (code === 'permission-denied' && statut === 'valid') {
+      try {
+        const racedSnapshot = await getDoc(docRef);
+        if (racedSnapshot.exists()) {
+          const prior = mapAttendanceSnapshot(racedSnapshot.id, racedSnapshot.data() || {}, now);
+          const duplicateRecord = buildRecord(
+            `att_${Date.now()}_${sanitizeForDocId(student.matricule).slice(0, 32)}_${Math.random()
+              .toString(36)
+              .substring(2, 6)}`
+          );
+          duplicateRecord.statut = 'duplicate_attempt';
+          duplicateRecord.anomalie = `Déjà pointé à ${new Date(prior.scannedAt).toLocaleTimeString(
+            'fr-FR'
+          )} par ${prior.pointeurNom || 'un pointeur'}`;
+          await setDoc(doc(db, 'attendance', duplicateRecord.id), duplicateRecord);
+          return duplicateRecord;
+        }
+      } catch (raceError) {
+        console.warn('Unable to resolve attendance race:', raceError);
+      }
+    }
+
+    handleFirestoreError(error, OperationType.WRITE, `attendance/${recordId}`);
   }
 }
+
 
 export async function correctAttendanceStatus(
   id: string,

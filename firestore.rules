@@ -41,6 +41,15 @@ service cloud.firestore {
       return isAdmin() || isApprovedPointer();
     }
 
+    // A distribution is only open when it has been explicitly opened
+    // ("ongoing", legacy "active"). Time-slot expiry is enforced by the
+    // clients (Web + Mobile) which close the distribution when heureFin is
+    // reached; pointage writes are then rejected by the rules below.
+    function isDistributionOpen(distributionId) {
+      return distributionId is string &&
+        get(/databases/$(database)/documents/distributions/$(distributionId)).data.statut in ['ongoing', 'active'];
+    }
+
     // Test connection ping document
     match /test/{testId} {
       allow read: if isSignedIn();
@@ -94,15 +103,42 @@ service cloud.firestore {
     // Distributions
     match /distributions/{distributionId} {
       allow get, list: if isOperationalUser();
-      allow create, update, delete: if isAdmin() && isValidId(distributionId);
+      allow create, delete: if isAdmin() && isValidId(distributionId);
+
+      // Admin: full edit. Pointer: may only close an open distribution
+      // (status + updatedAt) which powers automatic slot expiry on mobile
+      // even when no administrator is connected.
+      allow update: if isValidId(distributionId) &&
+        (
+          isAdmin() ||
+          (
+            isApprovedPointer() &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['statut', 'updatedAt']) &&
+            request.resource.data.statut == 'completed' &&
+            resource.data.statut in ['ongoing', 'active']
+          )
+        );
     }
 
-    // Pointages (Scans Mobile App)
+    // Pointages (legacy mobile mirror, kept in sync with /attendance)
     match /pointages/{pointageId} {
       allow get, list: if isOperationalUser();
-      allow create, update: if isOperationalUser() &&
-        isValidId(pointageId) &&
-        (isAdmin() || request.resource.data.pointerId == request.auth.uid);
+
+      allow create: if isValidId(pointageId) &&
+        (
+          isAdmin() ||
+          (isApprovedPointer() && request.resource.data.pointerId == request.auth.uid)
+        ) &&
+        request.resource.data.keys().hasAll(['studentMatricule', 'distributionId', 'mealType']) &&
+        isDistributionOpen(request.resource.data.distributionId);
+
+      allow update: if isAdmin() ||
+        (
+          isApprovedPointer() &&
+          resource.data.pointerId == request.auth.uid &&
+          request.resource.data.pointerId == request.auth.uid
+        );
+
       allow delete: if isAdmin();
     }
 
@@ -110,15 +146,24 @@ service cloud.firestore {
     match /attendance/{attendanceId} {
       allow get, list: if isOperationalUser();
 
-      allow create, update: if isValidId(attendanceId) &&
+      // New pointages are only accepted while the distribution is open.
+      // The client also checks this, but the rule is the authoritative gate.
+      allow create: if isValidId(attendanceId) &&
         (
           isAdmin() ||
-          (
-            isApprovedPointer() &&
-            request.resource.data.pointeurId == request.auth.uid
-          )
+          (isApprovedPointer() && request.resource.data.pointeurId == request.auth.uid)
         ) &&
-        request.resource.data.keys().hasAll(['matricule', 'distributionId', 'statut']);
+        request.resource.data.keys().hasAll(['matricule', 'distributionId', 'pointeurId', 'statut']) &&
+        isDistributionOpen(request.resource.data.distributionId);
+
+      // Idempotent re-sync of an existing pointage by its own author.
+      // Administrative corrections (any field) remain restricted to admins.
+      allow update: if isAdmin() ||
+        (
+          isApprovedPointer() &&
+          resource.data.pointeurId == request.auth.uid &&
+          request.resource.data.pointeurId == request.auth.uid
+        );
 
       allow delete: if isAdmin();
     }

@@ -10,6 +10,9 @@ export interface UserAccount {
   requestedAt: string;
   updatedAt?: string;
   updatedBy?: string;
+  assignedSessionId?: string | null;
+  assignedSessionNom?: string | null;
+  sessionId?: string | null;
 }
 
 export type SessionStatus = 'planned' | 'ongoing' | 'completed' | 'archived';

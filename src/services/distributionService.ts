@@ -9,6 +9,116 @@ import {
 import { db, handleFirestoreError, OperationType } from '../firebase';
 import { Distribution, DistributionStatus, DistributionType } from '../types';
 
+/** Normalises the legacy "active" status (mobile) to the Web "ongoing" one. */
+export function normalizeDistributionStatus(raw: unknown): DistributionStatus {
+  switch (String(raw || '').toLowerCase()) {
+    case 'ongoing':
+    case 'active':
+    case 'en_cours':
+      return 'ongoing';
+    case 'completed':
+    case 'termine':
+      return 'completed';
+    case 'cancelled':
+    case 'annule':
+      return 'cancelled';
+    case 'draft':
+    case 'brouillon':
+      return 'draft';
+    default:
+      return 'planned';
+  }
+}
+
+function parseLocalDateTime(date: string, time: string): Date | null {
+  if (!date || !time) return null;
+  const [year, month, day] = date.split('-').map((part) => Number(part));
+  const [hours, minutes] = time.split(':').map((part) => Number(part));
+  if (
+    !Number.isFinite(year) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(day) ||
+    !Number.isFinite(hours) ||
+    !Number.isFinite(minutes)
+  ) {
+    return null;
+  }
+  const parsed = new Date(year, month - 1, day, hours, minutes, 0, 0);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function getDistributionStart(distribution: Distribution): Date | null {
+  return parseLocalDateTime(distribution.date, distribution.heureDebut);
+}
+
+export function getDistributionEnd(distribution: Distribution): Date | null {
+  return parseLocalDateTime(distribution.date, distribution.heureFin);
+}
+
+/**
+ * A distribution accepts pointages only when it is explicitly opened
+ * ("ongoing") AND the current time is inside its [heureDebut, heureFin] slot.
+ */
+export function isDistributionOpen(distribution: Distribution, now: Date = new Date()): boolean {
+  if (normalizeDistributionStatus(distribution.statut) !== 'ongoing') return false;
+  const start = getDistributionStart(distribution);
+  const end = getDistributionEnd(distribution);
+  if (!start || !end) return false;
+  return now.getTime() >= start.getTime() && now.getTime() <= end.getTime();
+}
+
+/** True when the slot is over but the distribution has not been closed yet. */
+export function isDistributionExpired(distribution: Distribution, now: Date = new Date()): boolean {
+  if (normalizeDistributionStatus(distribution.statut) !== 'ongoing') return false;
+  const end = getDistributionEnd(distribution);
+  return !!end && now.getTime() > end.getTime();
+}
+
+/** Status shown in the UI, taking the end of the slot into account. */
+export function getEffectiveStatus(
+  distribution: Distribution,
+  now: Date = new Date()
+): DistributionStatus {
+  if (isDistributionExpired(distribution, now)) return 'completed';
+  return normalizeDistributionStatus(distribution.statut);
+}
+
+/** Canonical meal identity shared with the mobile app (avoids duplicate ids). */
+export function getMealIdentity(distribution: Distribution): string {
+  return distribution.typeDistribution || distribution.repasProduits?.[0] || 'Repas';
+}
+
+export function describeDistributionWindow(distribution: Distribution): string {
+  return `${distribution.heureDebut} – ${distribution.heureFin}`;
+}
+
+const closingDistributionIds = new Set<string>();
+
+/**
+ * Closes every distribution whose slot is finished. Used by the admin Web
+ * session as a fallback when nobody manually closes the distribution.
+ */
+export async function closeExpiredDistributions(
+  distributions: Distribution[],
+  now: Date = new Date()
+): Promise<string[]> {
+  const closed: string[] = [];
+  for (const distribution of distributions) {
+    if (!isDistributionExpired(distribution, now)) continue;
+    if (closingDistributionIds.has(distribution.id)) continue;
+    closingDistributionIds.add(distribution.id);
+    try {
+      await updateDistribution(distribution.id, { statut: 'completed' });
+      closed.push(distribution.id);
+    } catch (error) {
+      console.error('Auto-close distribution failed:', distribution.id, error);
+    } finally {
+      closingDistributionIds.delete(distribution.id);
+    }
+  }
+  return closed;
+}
+
 export function subscribeToDistributions(
   onUpdate: (distributions: Distribution[]) => void,
   onError: (err: any) => void
@@ -31,7 +141,7 @@ export function subscribeToDistributions(
           repasProduits: Array.isArray(data.repasProduits) ? data.repasProduits : [data.typeDistribution || 'Déjeuner'],
           quantitePrevue: typeof data.quantitePrevue === 'number' ? data.quantitePrevue : 0,
           description: data.description || '',
-          statut: (data.statut as DistributionStatus) || 'planned',
+          statut: normalizeDistributionStatus(data.statut),
           createdAt: data.createdAt,
           updatedAt: data.updatedAt,
         };
