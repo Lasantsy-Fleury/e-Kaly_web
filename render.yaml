@@ -1,0 +1,33 @@
+# ==============================================================================
+# Render.com Blueprint Configuration
+# Déploiement en 1 clic : Base PostgreSQL + API REST Express Node.js
+# ==============================================================================
+
+services:
+  # Web Service API REST
+  - type: web
+    name: ekaly-backend
+    runtime: node
+    plan: free
+    region: frankfurt # ou oregon / ohio
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ekaly-db
+          property: connectionString
+
+databases:
+  # Base de données PostgreSQL infogérée
+  - name: ekaly-db
+    plan: free
+    region: frankfurt
+    databaseName: ekaly
+    user: ekaly_user

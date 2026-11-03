@@ -1,0 +1,29 @@
+# ==============================================================================
+# Render.com Blueprint Configuration (Backend)
+# ==============================================================================
+
+services:
+  - type: web
+    name: ekaly-backend
+    runtime: node
+    plan: free
+    region: frankfurt
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ekaly-db
+          property: connectionString
+
+databases:
+  - name: ekaly-db
+    plan: free
+    region: frankfurt
+    databaseName: ekaly
+    user: ekaly_user
