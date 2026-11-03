@@ -112,12 +112,15 @@ router.get('/me', async (req, res, next) => {
     let sql = 'SELECT * FROM users WHERE 1=0';
     const params = [];
 
-    if (userId) {
+    if (userId && email) {
+      params.push(userId, String(email).toLowerCase().trim());
+      sql = `SELECT * FROM users WHERE id = $1 OR email = $2 ORDER BY (CASE WHEN id = $1 THEN 1 ELSE 2 END) LIMIT 1`;
+    } else if (userId) {
       params.push(userId);
-      sql = `SELECT * FROM users WHERE id = $${params.length}`;
+      sql = `SELECT * FROM users WHERE id = $1 LIMIT 1`;
     } else if (email) {
       params.push(String(email).toLowerCase().trim());
-      sql = `SELECT * FROM users WHERE email = $${params.length}`;
+      sql = `SELECT * FROM users WHERE email = $1 LIMIT 1`;
     } else if (authHeader && authHeader.startsWith('Bearer ')) {
       // Decode user from basic bearer token
       const raw = authHeader.substring(7);
