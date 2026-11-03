@@ -15,7 +15,11 @@ import {
 } from './services/authService';
 import { subscribeToSessions } from './services/sessionService';
 import { subscribeToStudents, deleteStudent } from './services/studentService';
-import { subscribeToDistributions, deleteDistribution, closeExpiredDistributions } from './services/distributionService';
+import {
+  subscribeToDistributions,
+  deleteDistribution,
+  autoSynchronizeDistributionStatuses,
+} from './services/distributionService';
 import { subscribeToAttendance } from './services/attendanceService';
 import {
   subscribeToUserAccounts,
@@ -200,21 +204,21 @@ export default function App() {
     };
   }, [currentUser, currentAccount]);
 
-  // 3. Auto-close distributions as soon as their time slot ends.
-  //    Cloud Functions are not available on this project, so the admin Web
-  //    session performs the closure; the mobile app does the same on the field.
+  // 3. Auto-open and auto-close distributions according to scheduled time slots.
+  //    Cloud Functions are not available on this project, so active admin Web
+  //    sessions perform convergence; the mobile app does the same on the field.
   useEffect(() => {
     if (!currentUser || !currentAccount || currentAccount.status !== 'approved') return;
     if (currentAccount.role !== 'admin') return;
 
     const tick = () => {
-      closeExpiredDistributions(distributions).catch((error) =>
-        console.error('Auto-close distributions error:', error)
+      autoSynchronizeDistributionStatuses(distributions).catch((error) =>
+        console.error('Auto-sync distributions error:', error)
       );
     };
 
     tick();
-    const intervalId = window.setInterval(tick, 30000);
+    const intervalId = window.setInterval(tick, 10000);
     return () => window.clearInterval(intervalId);
   }, [currentUser, currentAccount, distributions]);
 

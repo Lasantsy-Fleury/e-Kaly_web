@@ -56,31 +56,56 @@ export function getDistributionEnd(distribution: Distribution): Date | null {
 }
 
 /**
- * A distribution accepts pointages only when it is explicitly opened
- * ("ongoing") AND the current time is inside its [heureDebut, heureFin] slot.
+ * A distribution accepts pointages when:
+ * 1. It is explicitly "ongoing", OR
+ * 2. It is "planned" / "draft" and the local clock has arrived inside [heureDebut, heureFin].
  */
 export function isDistributionOpen(distribution: Distribution, now: Date = new Date()): boolean {
-  if (normalizeDistributionStatus(distribution.statut) !== 'ongoing') return false;
+  const norm = normalizeDistributionStatus(distribution.statut);
+  if (norm === 'completed' || norm === 'cancelled') return false;
   const start = getDistributionStart(distribution);
   const end = getDistributionEnd(distribution);
   if (!start || !end) return false;
-  return now.getTime() >= start.getTime() && now.getTime() <= end.getTime();
+  const time = now.getTime();
+  return (
+    time >= start.getTime() &&
+    time <= end.getTime() &&
+    (norm === 'ongoing' || norm === 'planned' || norm === 'draft')
+  );
 }
 
 /** True when the slot is over but the distribution has not been closed yet. */
 export function isDistributionExpired(distribution: Distribution, now: Date = new Date()): boolean {
-  if (normalizeDistributionStatus(distribution.statut) !== 'ongoing') return false;
+  const norm = normalizeDistributionStatus(distribution.statut);
+  if (norm === 'cancelled') return false;
   const end = getDistributionEnd(distribution);
   return !!end && now.getTime() > end.getTime();
 }
 
-/** Status shown in the UI, taking the end of the slot into account. */
+/** True when the distribution is planned or draft and its slot has arrived. */
+export function shouldAutoOpenDistribution(
+  distribution: Distribution,
+  now: Date = new Date()
+): boolean {
+  const norm = normalizeDistributionStatus(distribution.statut);
+  if (norm !== 'planned' && norm !== 'draft') return false;
+  const start = getDistributionStart(distribution);
+  const end = getDistributionEnd(distribution);
+  if (!start || !end) return false;
+  const time = now.getTime();
+  return time >= start.getTime() && time <= end.getTime();
+}
+
+/** Status shown in the UI, taking automatic slot opening and closing into account. */
 export function getEffectiveStatus(
   distribution: Distribution,
   now: Date = new Date()
 ): DistributionStatus {
-  if (isDistributionExpired(distribution, now)) return 'completed';
-  return normalizeDistributionStatus(distribution.statut);
+  const norm = normalizeDistributionStatus(distribution.statut);
+  if (norm === 'cancelled') return 'cancelled';
+  if (norm === 'completed' || isDistributionExpired(distribution, now)) return 'completed';
+  if (isDistributionOpen(distribution, now)) return 'ongoing';
+  return norm;
 }
 
 /** Canonical meal identity shared with the mobile app (avoids duplicate ids). */
@@ -92,31 +117,67 @@ export function describeDistributionWindow(distribution: Distribution): string {
   return `${distribution.heureDebut} – ${distribution.heureFin}`;
 }
 
-const closingDistributionIds = new Set<string>();
+const syncInProgressIds = new Set<string>();
 
 /**
- * Closes every distribution whose slot is finished. Used by the admin Web
- * session as a fallback when nobody manually closes the distribution.
+ * Automatically synchronizes distribution statuses with time slots:
+ * 1. Opens distributions whose scheduled slot [heureDebut, heureFin] has arrived.
+ * 2. Closes distributions whose slot has ended.
+ * Ensures the web console and Firestore stay converged in real time.
+ */
+export async function autoSynchronizeDistributionStatuses(
+  distributions: Distribution[],
+  now: Date = new Date()
+): Promise<{ opened: string[]; closed: string[] }> {
+  const opened: string[] = [];
+  const closed: string[] = [];
+
+  for (const distribution of distributions) {
+    if (syncInProgressIds.has(distribution.id)) continue;
+
+    // 1. Auto-open when time slot arrives
+    if (shouldAutoOpenDistribution(distribution, now)) {
+      syncInProgressIds.add(distribution.id);
+      try {
+        await updateDistribution(distribution.id, { statut: 'ongoing' });
+        opened.push(distribution.id);
+      } catch (error) {
+        console.error('Auto-open distribution failed:', distribution.id, error);
+      } finally {
+        syncInProgressIds.delete(distribution.id);
+      }
+      continue;
+    }
+
+    // 2. Auto-close when time slot ends
+    if (
+      isDistributionExpired(distribution, now) &&
+      normalizeDistributionStatus(distribution.statut) !== 'completed'
+    ) {
+      syncInProgressIds.add(distribution.id);
+      try {
+        await updateDistribution(distribution.id, { statut: 'completed' });
+        closed.push(distribution.id);
+      } catch (error) {
+        console.error('Auto-close distribution failed:', distribution.id, error);
+      } finally {
+        syncInProgressIds.delete(distribution.id);
+      }
+    }
+  }
+
+  return { opened, closed };
+}
+
+/**
+ * Closes every distribution whose slot is finished. Kept for backward compatibility.
  */
 export async function closeExpiredDistributions(
   distributions: Distribution[],
   now: Date = new Date()
 ): Promise<string[]> {
-  const closed: string[] = [];
-  for (const distribution of distributions) {
-    if (!isDistributionExpired(distribution, now)) continue;
-    if (closingDistributionIds.has(distribution.id)) continue;
-    closingDistributionIds.add(distribution.id);
-    try {
-      await updateDistribution(distribution.id, { statut: 'completed' });
-      closed.push(distribution.id);
-    } catch (error) {
-      console.error('Auto-close distribution failed:', distribution.id, error);
-    } finally {
-      closingDistributionIds.delete(distribution.id);
-    }
-  }
-  return closed;
+  const result = await autoSynchronizeDistributionStatuses(distributions, now);
+  return result.closed;
 }
 
 export function subscribeToDistributions(

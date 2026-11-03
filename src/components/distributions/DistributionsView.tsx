@@ -137,10 +137,10 @@ export const DistributionsView: React.FC<DistributionsViewProps> = ({
   const handleStatusChange = async (dist: Distribution, newStatus: DistributionStatus) => {
     if (newStatus === 'ongoing' && !isDistributionOpen({ ...dist, statut: 'ongoing' })) {
       await customAlert({
-        title: 'Hors créneau',
-        message: `Impossible d'ouvrir cette distribution : le créneau ${dist.heureDebut} – ${dist.heureFin} du ${new Date(
+        title: 'Créneau non débuté',
+        message: `Cette distribution est programmée pour ${dist.heureDebut} – ${dist.heureFin} le ${new Date(
           `${dist.date}T12:00:00`
-        ).toLocaleDateString('fr-FR')} n'est pas en cours. Les pointages ne seraient pas autorisés.`,
+        ).toLocaleDateString('fr-FR')}. Elle s'ouvrira automatiquement dès l'arrivée de l'heure du créneau.`,
         variant: 'warning',
       });
       return;

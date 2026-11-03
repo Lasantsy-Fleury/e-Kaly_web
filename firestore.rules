@@ -105,17 +105,18 @@ service cloud.firestore {
       allow get, list: if isOperationalUser();
       allow create, delete: if isAdmin() && isValidId(distributionId);
 
-      // Admin: full edit. Pointer: may only close an open distribution
-      // (status + updatedAt) which powers automatic slot expiry on mobile
-      // even when no administrator is connected.
+      // Admin: full edit. Pointer: may automatically open a planned distribution when time slot arrives
+      // or close an open/expired distribution (status + updatedAt), powering autonomous slot lifecycle.
       allow update: if isValidId(distributionId) &&
         (
           isAdmin() ||
           (
             isApprovedPointer() &&
             request.resource.data.diff(resource.data).affectedKeys().hasOnly(['statut', 'updatedAt']) &&
-            request.resource.data.statut == 'completed' &&
-            resource.data.statut in ['ongoing', 'active']
+            (
+              (request.resource.data.statut == 'ongoing' && resource.data.statut in ['planned', 'scheduled', 'draft']) ||
+              (request.resource.data.statut == 'completed' && resource.data.statut in ['ongoing', 'active', 'planned', 'scheduled'])
+            )
           )
         );
     }
