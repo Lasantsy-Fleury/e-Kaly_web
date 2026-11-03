@@ -23,6 +23,8 @@ export function subscribeToAttendance(
   onUpdate: (records: Attendance[]) => void,
   onError: (err: any) => void
 ) {
+  let lastSignature = '';
+
   const fetchAttendance = async () => {
     try {
       const rows = await ekalyApi.attendance.list();
@@ -50,7 +52,12 @@ export function subscribeToAttendance(
       });
 
       list.sort((a, b) => b.syncedAt.localeCompare(a.syncedAt));
-      onUpdate(list);
+
+      const sig = `${list.length}:` + list.slice(0, 50).map((a) => `${a.id}:${a.statut}`).join('|');
+      if (sig !== lastSignature) {
+        lastSignature = sig;
+        onUpdate(list);
+      }
     } catch (error) {
       console.error('[PostgreSQL] Erreur chargement pointages:', error);
       onError(error);
@@ -58,7 +65,7 @@ export function subscribeToAttendance(
   };
 
   fetchAttendance();
-  const intervalId = window.setInterval(fetchAttendance, 4000);
+  const intervalId = window.setInterval(fetchAttendance, 5000);
   return () => window.clearInterval(intervalId);
 }
 

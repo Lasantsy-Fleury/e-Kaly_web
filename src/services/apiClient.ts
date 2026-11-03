@@ -3,6 +3,11 @@
  * Permet d'interagir directement avec la base de données PostgreSQL.
  */
 
+/**
+ * URL de base centralisée du backend PostgreSQL déployé sur Render.com
+ */
+export const BACKEND_BASE_URL = 'https://ekaly-backend.onrender.com';
+
 function resolveApiBaseUrl(): string {
   const raw = import.meta.env.VITE_API_URL?.trim();
   if (raw) {
@@ -11,12 +16,10 @@ function resolveApiBaseUrl(): string {
     }
     return `https://${raw.replace(/\/+$/, '')}/api`;
   }
-  return import.meta.env.PROD
-    ? 'https://ekaly-backend.onrender.com/api'
-    : 'http://localhost:10000/api';
+  return `${BACKEND_BASE_URL}/api`;
 }
 
-const API_BASE_URL = resolveApiBaseUrl();
+export const API_BASE_URL = resolveApiBaseUrl();
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;

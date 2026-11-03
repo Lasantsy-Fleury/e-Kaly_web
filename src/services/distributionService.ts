@@ -175,6 +175,8 @@ export function subscribeToDistributions(
   onUpdate: (distributions: Distribution[]) => void,
   onError: (err: any) => void
 ) {
+  let lastSignature = '';
+
   const fetchDistributions = async () => {
     try {
       const rows = await ekalyApi.distributions.list();
@@ -211,7 +213,11 @@ export function subscribeToDistributions(
         return b.heureDebut.localeCompare(a.heureDebut);
       });
 
-      onUpdate(list);
+      const sig = list.map((d) => `${d.id}:${d.statut}:${d.updatedAt || ''}:${d.heureDebut}-${d.heureFin}`).join('|');
+      if (sig !== lastSignature) {
+        lastSignature = sig;
+        onUpdate(list);
+      }
     } catch (error) {
       console.error('[PostgreSQL] Erreur chargement distributions:', error);
       onError(error);
@@ -219,7 +225,7 @@ export function subscribeToDistributions(
   };
 
   fetchDistributions();
-  const intervalId = window.setInterval(fetchDistributions, 5000);
+  const intervalId = window.setInterval(fetchDistributions, 8000);
   return () => window.clearInterval(intervalId);
 }
 

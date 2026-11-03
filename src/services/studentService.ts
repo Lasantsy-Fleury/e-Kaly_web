@@ -9,6 +9,8 @@ export function subscribeToStudents(
   onUpdate: (students: Student[]) => void,
   onError: (err: any) => void
 ) {
+  let lastSignature = '';
+
   const fetchStudents = async () => {
     try {
       const rows = await ekalyApi.students.list();
@@ -41,7 +43,12 @@ export function subscribeToStudents(
 
       // Sort alphabetically by nom, prenoms
       list.sort((a, b) => a.nom.localeCompare(b.nom));
-      onUpdate(list);
+
+      const sig = `${list.length}:` + list.map((s) => `${s.id}:${s.active}:${s.sessionId}:${s.updatedAt || ''}`).join('|');
+      if (sig !== lastSignature) {
+        lastSignature = sig;
+        onUpdate(list);
+      }
     } catch (error) {
       console.error('[PostgreSQL] Erreur chargement étudiants:', error);
       onError(error);
@@ -49,7 +56,7 @@ export function subscribeToStudents(
   };
 
   fetchStudents();
-  const intervalId = window.setInterval(fetchStudents, 5000);
+  const intervalId = window.setInterval(fetchStudents, 10000);
   return () => window.clearInterval(intervalId);
 }
 

@@ -8,6 +8,8 @@ export function subscribeToSessions(
   onUpdate: (sessions: Session[]) => void,
   onError: (err: any) => void
 ) {
+  let lastSignature = '';
+
   const fetchSessions = async () => {
     try {
       const rows = await ekalyApi.sessions.list();
@@ -25,7 +27,12 @@ export function subscribeToSessions(
 
       // Tri par date de début décroissante
       list.sort((a, b) => b.dateDebut.localeCompare(a.dateDebut));
-      onUpdate(list);
+
+      const sig = list.map((s) => `${s.id}:${s.statut}:${s.nom}:${s.updatedAt || ''}`).join('|');
+      if (sig !== lastSignature) {
+        lastSignature = sig;
+        onUpdate(list);
+      }
     } catch (error) {
       console.error('[PostgreSQL] Erreur chargement sessions:', error);
       onError(error);
@@ -33,7 +40,7 @@ export function subscribeToSessions(
   };
 
   fetchSessions();
-  const intervalId = window.setInterval(fetchSessions, 5000);
+  const intervalId = window.setInterval(fetchSessions, 10000);
   return () => window.clearInterval(intervalId);
 }
 

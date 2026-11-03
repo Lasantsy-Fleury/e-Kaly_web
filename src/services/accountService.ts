@@ -8,6 +8,8 @@ export function subscribeToUserAccounts(
   onUpdate: (accounts: UserAccount[]) => void,
   onError: (err: any) => void
 ) {
+  let lastSignature = '';
+
   const fetchUsers = async () => {
     try {
       const rows = await ekalyApi.users.list();
@@ -31,7 +33,11 @@ export function subscribeToUserAccounts(
         return (b.requestedAt || '').localeCompare(a.requestedAt || '');
       });
 
-      onUpdate(list);
+      const sig = list.map((u) => `${u.uid}:${u.role}:${u.status}:${u.assignedSessionId || ''}`).join('|');
+      if (sig !== lastSignature) {
+        lastSignature = sig;
+        onUpdate(list);
+      }
     } catch (error) {
       console.error('[PostgreSQL] Erreur chargement utilisateurs:', error);
       onError(error);
@@ -39,7 +45,7 @@ export function subscribeToUserAccounts(
   };
 
   fetchUsers();
-  const intervalId = window.setInterval(fetchUsers, 5000);
+  const intervalId = window.setInterval(fetchUsers, 10000);
   return () => window.clearInterval(intervalId);
 }
 
@@ -96,6 +102,8 @@ export function subscribeToAuditLogs(
   onUpdate: (logs: AuditLog[]) => void,
   onError: (err: any) => void
 ) {
+  let lastSignature = '';
+
   const fetchAudit = async () => {
     try {
       const rows = await ekalyApi.audit.list(100);
@@ -110,7 +118,12 @@ export function subscribeToAuditLogs(
       }));
 
       list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
-      onUpdate(list);
+
+      const sig = `${list.length}:` + (list[0]?.id || '') + ':' + (list[0]?.timestamp || '');
+      if (sig !== lastSignature) {
+        lastSignature = sig;
+        onUpdate(list);
+      }
     } catch (error) {
       console.error('[PostgreSQL] Erreur chargement journal audit:', error);
       onError(error);
@@ -118,6 +131,6 @@ export function subscribeToAuditLogs(
   };
 
   fetchAudit();
-  const intervalId = window.setInterval(fetchAudit, 8000);
+  const intervalId = window.setInterval(fetchAudit, 15000);
   return () => window.clearInterval(intervalId);
 }

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { User as FirebaseUser } from 'firebase/auth';
 import { motion, AnimatePresence } from 'motion/react';
 import {
@@ -14,10 +14,9 @@ import {
   signOutUser,
 } from './services/authService';
 import { subscribeToSessions } from './services/sessionService';
-import { subscribeToStudents, deleteStudent } from './services/studentService';
+import { subscribeToStudents } from './services/studentService';
 import {
   subscribeToDistributions,
-  deleteDistribution,
   autoSynchronizeDistributionStatuses,
 } from './services/distributionService';
 import { subscribeToAttendance } from './services/attendanceService';
@@ -71,6 +70,11 @@ export default function App() {
   const [dataLoading, setDataLoading] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
 
+  const initialDataLoadedRef = useRef(false);
+  const sessionInitializedRef = useRef(false);
+  const distributionsRef = useRef<Distribution[]>(distributions);
+  distributionsRef.current = distributions;
+
   const toggleSidebarCollapse = () => {
     setIsSidebarCollapsed((prev) => {
       const next = !prev;
@@ -97,19 +101,27 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // 2. Subscribe to Firestore Collections when authenticated & approved as admin
+  const authUserId = currentUser?.uid;
+  const userRole = currentAccount?.role;
+  const userStatus = currentAccount?.status;
+
+  // 2. Subscribe to Collections when authenticated & approved as admin
   useEffect(() => {
-    if (!currentUser || !currentAccount || currentAccount.status !== 'approved' || currentAccount.role !== 'admin') {
+    if (!authUserId || !currentAccount || userStatus !== 'approved' || userRole !== 'admin') {
       setSessions([]);
       setStudents([]);
       setDistributions([]);
       setAttendances([]);
       setAccounts([]);
       setAuditLogs([]);
+      initialDataLoadedRef.current = false;
+      sessionInitializedRef.current = false;
       return;
     }
 
-    setDataLoading(true);
+    if (!initialDataLoadedRef.current) {
+      setDataLoading(true);
+    }
     setDataError(null);
 
     const unsubs: (() => void)[] = [];
@@ -119,16 +131,10 @@ export default function App() {
       subscribeToSessions(
         (data) => {
           setSessions(data);
-          if (currentAccount.role === 'pointer' && currentAccount.assignedSessionId) {
-            setSelectedSessionId(currentAccount.assignedSessionId);
-          } else if (data.length === 0) {
-            setSelectedSessionId('all');
-          } else if (selectedSessionId === 'all') {
+          if (!sessionInitializedRef.current && data.length > 0) {
+            sessionInitializedRef.current = true;
             const ongoing = data.find((s) => s.statut === 'ongoing') || data[0];
             if (ongoing) setSelectedSessionId(ongoing.id);
-          } else if (!data.some((s) => s.id === selectedSessionId)) {
-            const ongoing = data.find((s) => s.statut === 'ongoing') || data[0];
-            setSelectedSessionId(ongoing ? ongoing.id : 'all');
           }
         },
         (err) => console.error('Sessions error:', err)
@@ -140,14 +146,8 @@ export default function App() {
       subscribeToStudents(
         (data) => {
           setStudents(data);
+          initialDataLoadedRef.current = true;
           setDataLoading(false);
-          if (currentAccount.role === 'admin') {
-            data.forEach((s) => {
-              if (s.id.startsWith('stu_00') || s.id.startsWith('stu_01')) {
-                deleteStudent(s.id).catch(console.error);
-              }
-            });
-          }
         },
         (err) => {
           console.error('Students error:', err);
@@ -162,13 +162,6 @@ export default function App() {
       subscribeToDistributions(
         (data) => {
           setDistributions(data);
-          if (currentAccount.role === 'admin') {
-            data.forEach((d) => {
-              if (d.id === 'dist_midi_campus' || d.id === 'dist_soir_colis' || d.id === 'dist_matin_petitdej') {
-                deleteDistribution(d.id).catch(console.error);
-              }
-            });
-          }
         },
         (err) => console.error('Distributions error:', err)
       )
@@ -183,7 +176,7 @@ export default function App() {
     );
 
     // Accounts & Audit (Admins)
-    if (currentAccount.role === 'admin') {
+    if (userRole === 'admin') {
       unsubs.push(
         subscribeToUserAccounts(
           (data) => setAccounts(data),
@@ -202,25 +195,24 @@ export default function App() {
     return () => {
       unsubs.forEach((u) => u());
     };
-  }, [currentUser, currentAccount]);
+  }, [authUserId, userRole, userStatus]);
 
   // 3. Auto-open and auto-close distributions according to scheduled time slots.
-  //    Cloud Functions are not available on this project, so active admin Web
-  //    sessions perform convergence; the mobile app does the same on the field.
+  //    Active admin Web sessions perform convergence periodically in background.
   useEffect(() => {
-    if (!currentUser || !currentAccount || currentAccount.status !== 'approved') return;
-    if (currentAccount.role !== 'admin') return;
+    if (!authUserId || !currentAccount || userStatus !== 'approved' || userRole !== 'admin') return;
 
     const tick = () => {
-      autoSynchronizeDistributionStatuses(distributions).catch((error) =>
-        console.error('Auto-sync distributions error:', error)
-      );
+      if (distributionsRef.current.length > 0) {
+        autoSynchronizeDistributionStatuses(distributionsRef.current).catch((error) =>
+          console.error('Auto-sync distributions error:', error)
+        );
+      }
     };
 
-    tick();
-    const intervalId = window.setInterval(tick, 10000);
+    const intervalId = window.setInterval(tick, 15000);
     return () => window.clearInterval(intervalId);
-  }, [currentUser, currentAccount, distributions]);
+  }, [authUserId, userRole, userStatus]);
 
   const isPointerUser = currentAccount?.role === 'pointer';
   const pointerSessionId = isPointerUser ? currentAccount?.assignedSessionId : null;

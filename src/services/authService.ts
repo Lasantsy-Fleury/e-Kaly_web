@@ -86,23 +86,32 @@ export function subscribeToAuthAndProfile(
 ) {
   let intervalId: number | null = null;
   let activeUser: FirebaseUser | null = null;
+  let lastAccountSignature: string | null = null;
+
+  const notifyIfChanged = (fbUser: FirebaseUser, account: UserAccount) => {
+    const sig = `${fbUser.uid}:${account.role}:${account.status}:${account.assignedSessionId || ''}:${account.displayName || ''}:${account.email || ''}`;
+    if (sig !== lastAccountSignature) {
+      lastAccountSignature = sig;
+      localStorage.setItem('ekaly_user', JSON.stringify(account));
+      onUpdate(fbUser, account);
+    }
+  };
 
   const checkPostgresProfile = async (fbUser: FirebaseUser) => {
     try {
       const account = await ekalyApi.auth.me(fbUser.uid, fbUser.email || undefined);
       if (account) {
-        localStorage.setItem('ekaly_user', JSON.stringify(account));
-        onUpdate(fbUser, account);
+        notifyIfChanged(fbUser, account);
       }
     } catch (e) {
       // Si la session n'est pas encore créée dans PostgreSQL, on la crée
       try {
         const created = await syncUserProfile(fbUser);
-        onUpdate(fbUser, created);
+        notifyIfChanged(fbUser, created);
       } catch (syncErr) {
         // Fallback administrateur bootstrappé si réseau temporairement inaccessible
         if (fbUser.email?.toLowerCase() === BOOTSTRAP_ADMIN_EMAIL.toLowerCase()) {
-          onUpdate(fbUser, {
+          notifyIfChanged(fbUser, {
             uid: fbUser.uid,
             email: fbUser.email,
             displayName: fbUser.displayName || 'Administrateur Principal',
@@ -128,6 +137,7 @@ export function subscribeToAuthAndProfile(
       activeUser = fbUser;
 
       if (!fbUser) {
+        lastAccountSignature = null;
         localStorage.removeItem('ekaly_token');
         localStorage.removeItem('ekaly_user');
         onUpdate(null, null);
@@ -137,12 +147,12 @@ export function subscribeToAuthAndProfile(
       // 1. Mise à jour immédiate
       await checkPostgresProfile(fbUser);
 
-      // 2. Polling régulier de PostgreSQL (toutes les 10 secondes) pour réagir aux approbations d'admin
+      // 2. Polling régulier de PostgreSQL (toutes les 15 secondes) pour réagir aux approbations d'admin
       intervalId = window.setInterval(() => {
         if (activeUser) {
           checkPostgresProfile(activeUser).catch(() => {});
         }
-      }, 10000);
+      }, 15000);
     },
     onError
   );
