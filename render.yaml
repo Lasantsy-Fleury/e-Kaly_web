@@ -1,15 +1,18 @@
 # ==============================================================================
 # Render.com Blueprint Configuration
-# Déploiement en 1 clic : Base PostgreSQL + API REST Express Node.js
+# Déploiement complet en 1 clic :
+# 1. Base PostgreSQL infogérée (ekaly-db)
+# 2. API REST Backend Express Node.js (ekaly-backend)
+# 3. Application Web Frontend React Vite (ekaly-web)
 # ==============================================================================
 
 services:
-  # Web Service API REST
+  # 1. API REST Backend (Node.js + Express)
   - type: web
     name: ekaly-backend
     runtime: node
     plan: free
-    region: frankfurt # ou oregon / ohio
+    region: frankfurt
     rootDir: backend
     buildCommand: npm install
     startCommand: npm start
@@ -24,8 +27,26 @@ services:
           name: ekaly-db
           property: connectionString
 
+  # 2. Application Web Frontend (React Vite Statique)
+  - type: static
+    name: ekaly-web
+    plan: free
+    region: frankfurt
+    buildCommand: npm run build
+    staticPublishPath: dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          type: web
+          name: ekaly-backend
+          property: host
+
 databases:
-  # Base de données PostgreSQL infogérée
+  # 3. Base de données PostgreSQL infogérée
   - name: ekaly-db
     plan: free
     region: frankfurt

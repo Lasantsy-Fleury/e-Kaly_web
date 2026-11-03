@@ -3,9 +3,20 @@
  * Permet d'interagir directement avec la base de données PostgreSQL.
  */
 
-const API_BASE_URL =
-  import.meta.env.VITE_API_URL?.replace(/\/+$/, '') ||
-  (import.meta.env.PROD ? 'https://ekaly-backend.onrender.com/api' : 'http://localhost:10000/api');
+function resolveApiBaseUrl(): string {
+  const raw = import.meta.env.VITE_API_URL?.trim();
+  if (raw) {
+    if (raw.startsWith('http://') || raw.startsWith('https://')) {
+      return raw.endsWith('/api') ? raw : `${raw.replace(/\/+$/, '')}/api`;
+    }
+    return `https://${raw.replace(/\/+$/, '')}/api`;
+  }
+  return import.meta.env.PROD
+    ? 'https://ekaly-backend.onrender.com/api'
+    : 'http://localhost:10000/api';
+}
+
+const API_BASE_URL = resolveApiBaseUrl();
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
