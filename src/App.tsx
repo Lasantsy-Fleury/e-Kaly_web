@@ -151,7 +151,7 @@ export default function App() {
         },
         (err) => {
           console.error('Students error:', err);
-          setDataError('Erreur de lecture des étudiants dans Firestore.');
+          setDataError('Erreur de communication avec la base de données PostgreSQL.');
           setDataLoading(false);
         }
       )

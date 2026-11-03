@@ -1,15 +1,7 @@
-import {
-  collection,
-  doc,
-  setDoc,
-  deleteDoc,
-  onSnapshot,
-  writeBatch,
-} from 'firebase/firestore';
 import QRCode from 'qrcode';
 import jsQR from 'jsqr';
 import JSZip from 'jszip';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { ekalyApi } from './apiClient';
 import { Student } from '../types';
 import { getDriveImageDirectUrl } from './excelService';
 
@@ -17,85 +9,70 @@ export function subscribeToStudents(
   onUpdate: (students: Student[]) => void,
   onError: (err: any) => void
 ) {
-  const colRef = collection(db, 'students');
-  return onSnapshot(
-    colRef,
-    (snapshot) => {
-      const list: Student[] = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id,
-          matricule: data.matricule || docSnap.id,
-          sessionId: data.sessionId || '',
-          sessionNom: data.sessionNom || '',
-          nom: data.nom || '',
-          prenoms: data.prenoms || '',
-          genre: data.genre || '',
-          niveau: 'M1', // Unique level: Master 1 ENI
-          parcours: data.parcours || '',
-          situationMatrimoniale: data.situationMatrimoniale || '',
-          nationalite: data.nationalite || '',
-          dateNaissance: data.dateNaissance || '',
-          lieuNaissance: data.lieuNaissance || '',
-          adresse: data.adresse || '',
-          email: data.email || '',
-          telephone: data.telephone || '',
-          photoUrl: data.photoUrl || '',
-          qrCodeToken: data.qrCodeToken || `EKALY-${data.matricule || docSnap.id}`,
-          qrCodeUrl: data.qrCodeUrl || '',
-          hasCustomQrCode: data.hasCustomQrCode !== undefined ? Boolean(data.hasCustomQrCode) : Boolean(data.qrCodeUrl),
-          active: data.active !== false,
-          extraFields: data.extraFields || {},
-          createdAt: data.createdAt,
-          updatedAt: data.updatedAt,
-        };
-      });
+  const fetchStudents = async () => {
+    try {
+      const rows = await ekalyApi.students.list();
+      const list: Student[] = rows.map((data: any) => ({
+        id: data.id,
+        matricule: data.matricule || data.id,
+        sessionId: data.session_id || data.sessionId || '',
+        sessionNom: data.session_nom || data.sessionNom || '',
+        nom: data.last_name || data.nom || '',
+        prenoms: data.first_name || data.prenoms || '',
+        genre: data.genre || '',
+        niveau: 'M1', // Master 1 ENI
+        parcours: data.faculty || data.parcours || 'GB',
+        situationMatrimoniale: data.situationMatrimoniale || '',
+        nationalite: data.nationalite || 'Malagasy',
+        dateNaissance: data.dateNaissance || '',
+        lieuNaissance: data.lieuNaissance || '',
+        adresse: data.adresse || '',
+        email: data.email || '',
+        telephone: data.telephone || '',
+        photoUrl: data.photo_url || data.photoUrl || '',
+        qrCodeToken: data.qr_code || data.qrCodeToken || `EKALY-${data.matricule || data.id}`,
+        qrCodeUrl: data.qrCodeUrl || '',
+        hasCustomQrCode: data.hasCustomQrCode !== undefined ? Boolean(data.hasCustomQrCode) : Boolean(data.qrCodeUrl),
+        active: data.is_eligible !== false && data.active !== false,
+        extraFields: data.extraFields || {},
+        createdAt: data.created_at || data.createdAt,
+        updatedAt: data.updated_at || data.updatedAt,
+      }));
+
       // Sort alphabetically by nom, prenoms
       list.sort((a, b) => a.nom.localeCompare(b.nom));
       onUpdate(list);
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, 'students');
+    } catch (error) {
+      console.error('[PostgreSQL] Erreur chargement étudiants:', error);
+      onError(error);
     }
-  );
+  };
+
+  fetchStudents();
+  const intervalId = window.setInterval(fetchStudents, 5000);
+  return () => window.clearInterval(intervalId);
 }
 
 export async function upsertStudent(student: Student): Promise<void> {
   const rawMat = (student.matricule || '').trim();
   const safeId = rawMat || student.id || '';
-  const docId = getStudentDocId(safeId);
-  if (!docId || docId === '.' || docId === '..' || docId.includes('/')) {
-    throw new Error(`Matricule invalide pour l'enregistrement Firestore : ${safeId}`);
-  }
-  const docRef = doc(db, 'students', docId);
-  try {
-    const payload: Student = {
-      ...student,
-      id: safeId,
-      matricule: safeId,
-      niveau: 'M1', // Strictly M1 ENI
-      qrCodeToken: student.qrCodeToken || `EKALY-${safeId}`,
-      qrCodeUrl: student.qrCodeUrl || '',
-      hasCustomQrCode: student.hasCustomQrCode !== undefined ? Boolean(student.hasCustomQrCode) : Boolean(student.qrCodeUrl),
-      active: student.active !== false,
-      updatedAt: new Date().toISOString(),
-    };
-    if (!student.createdAt) {
-      payload.createdAt = new Date().toISOString();
-    }
-    await setDoc(docRef, payload, { merge: true });
-  } catch (error) {
-    handleFirestoreError(error, OperationType.WRITE, `students/${docId}`);
-  }
+
+  await ekalyApi.students.create({
+    id: safeId,
+    sessionId: student.sessionId,
+    sessionNom: student.sessionNom,
+    matricule: safeId,
+    firstName: student.prenoms,
+    lastName: student.nom,
+    qrCode: student.qrCodeToken || `EKALY-${safeId}`,
+    faculty: student.parcours || 'GB',
+    isEligible: student.active !== false,
+    photoUrl: student.photoUrl,
+  });
 }
 
 export async function deleteStudent(studentId: string): Promise<void> {
-  const docRef = doc(db, 'students', studentId);
-  try {
-    await deleteDoc(docRef);
-  } catch (error) {
-    handleFirestoreError(error, OperationType.DELETE, `students/${studentId}`);
-  }
+  await ekalyApi.students.delete(studentId);
 }
 
 export interface BatchImportResult {
@@ -264,7 +241,6 @@ export async function batchImportStudents(
 
   interface PendingWrite {
     matricule: string;
-    docRef: ReturnType<typeof doc>;
     data: Student;
     existed: boolean;
   }
@@ -279,7 +255,6 @@ export async function batchImportStudents(
 
   for (let c = 0; c < chunks.length; c++) {
     const chunk = chunks[c];
-    const batch = writeBatch(db);
     const pending: PendingWrite[] = [];
 
     for (const item of chunk) {
@@ -297,25 +272,9 @@ export async function batchImportStudents(
       }
 
       const mat = rawMat;
-      if (mat === '.' || mat === '..' || mat.includes('/')) {
-        result.failed++;
-        result.errors.push(`Matricule "${mat}" invalide comme identifiant Firestore (« / » ou « . » seul interdit).`);
-        reportProgress();
-        continue;
-      }
-      const docId = getStudentDocId(mat);
-      if (docId === '.' || docId === '..' || docId.includes('/')) {
-        result.failed++;
-        result.errors.push(`Matricule "${mat}" invalide comme identifiant Firestore.`);
-        reportProgress();
-        continue;
-      }
-
-      const existing = existingStudentsMap.get(mat) || existingStudentsMap.get(docId);
+      const existing = existingStudentsMap.get(mat);
 
       try {
-        const docRef = doc(db, 'students', docId);
-
         const rawCustomUrl = item.qrCodeUrl || existing?.qrCodeUrl || '';
         const hasCustomQrCode = item.hasCustomQrCode !== undefined
           ? item.hasCustomQrCode
@@ -363,8 +322,7 @@ export async function batchImportStudents(
           updatedAt: now,
         };
 
-        batch.set(docRef, mergedData, { merge: true });
-        pending.push({ matricule: mat, docRef, data: mergedData, existed: Boolean(existing) });
+        pending.push({ matricule: mat, data: mergedData, existed: Boolean(existing) });
       } catch (error) {
         result.failed++;
         result.errors.push(`${mat} : ${error instanceof Error ? error.message : String(error)}`);
@@ -377,15 +335,26 @@ export async function batchImportStudents(
     if (pending.length === 0) continue;
 
     try {
-      await batch.commit();
+      const studentsToImport = pending.map((p) => ({
+        id: p.data.id,
+        sessionId: p.data.sessionId,
+        sessionNom: p.data.sessionNom,
+        matricule: p.data.matricule,
+        firstName: p.data.prenoms,
+        lastName: p.data.nom,
+        qrCode: p.data.qrCodeToken,
+        faculty: p.data.parcours || 'GB',
+        isEligible: p.data.active !== false,
+        photoUrl: p.data.photoUrl,
+      }));
+
+      await ekalyApi.students.batchImport(studentsToImport, targetSession.id, targetSession.nom);
       pending.forEach((entry) => countSuccess(entry.existed));
     } catch (error) {
-      // Un seul document invalide fait échouer tout le lot (writeBatch est atomique).
-      // On bascule en écriture individuelle pour ne pas perdre les lignes valides.
-      console.error('Batch commit failed for chunk', c, error);
+      console.error('[PostgreSQL] Batch commit fallback:', error);
       for (const entry of pending) {
         try {
-          await setDoc(entry.docRef, entry.data, { merge: true });
+          await upsertStudent(entry.data);
           countSuccess(entry.existed);
         } catch (writeError) {
           result.failed++;

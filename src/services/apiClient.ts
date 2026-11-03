@@ -20,8 +20,10 @@ const API_BASE_URL = resolveApiBaseUrl();
 
 async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const token = typeof window !== 'undefined' ? localStorage.getItem('ekaly_token') : null;
   const headers = {
     'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers || {}),
   };
 
@@ -37,6 +39,20 @@ async function request<T>(endpoint: string, options: RequestInit = {}): Promise<
 export const ekalyApi = {
   // Health
   checkHealth: () => request<{ status: string; database: string }>('/health'),
+
+  // Auth
+  auth: {
+    googleLogin: (data: { credential?: string; email?: string; displayName?: string; photoUrl?: string; uid?: string }) =>
+      request<{ success: boolean; user: any; token: string }>('/auth/google', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    me: (userId?: string, email?: string) => {
+      const query = userId ? `?userId=${userId}` : email ? `?email=${encodeURIComponent(email)}` : '';
+      return request<any>(`/auth/me${query}`);
+    },
+    logout: () => request<{ success: boolean }>('/auth/logout', { method: 'POST' }),
+  },
 
   // Sessions
   sessions: {

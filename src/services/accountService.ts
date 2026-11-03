@@ -1,37 +1,28 @@
-import {
-  collection,
-  doc,
-  updateDoc,
-  setDoc,
-  onSnapshot,
-} from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { ekalyApi } from './apiClient';
 import { AccountStatus, AuditLog, UserAccount, UserRole } from '../types';
 
+/**
+ * Abonnement réactif à la liste des utilisateurs depuis PostgreSQL
+ */
 export function subscribeToUserAccounts(
   onUpdate: (accounts: UserAccount[]) => void,
   onError: (err: any) => void
 ) {
-  const colRef = collection(db, 'users');
-  return onSnapshot(
-    colRef,
-    (snapshot) => {
-      const list: UserAccount[] = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          uid: docSnap.id,
-          email: data.email || '',
-          displayName: data.displayName || 'Utilisateur',
-          role: (data.role as UserRole) || 'pointer',
-          status: (data.status as AccountStatus) || 'pending',
-          requestedAt: data.requestedAt || new Date().toISOString(),
-          updatedAt: data.updatedAt,
-          updatedBy: data.updatedBy,
-          assignedSessionId: data.assignedSessionId || data.sessionId || null,
-          assignedSessionNom: data.assignedSessionNom || data.sessionNom || null,
-          sessionId: data.assignedSessionId || data.sessionId || null,
-        };
-      });
+  const fetchUsers = async () => {
+    try {
+      const rows = await ekalyApi.users.list();
+      const list: UserAccount[] = rows.map((data: any) => ({
+        uid: data.id,
+        email: data.email || '',
+        displayName: data.display_name || data.displayName || 'Utilisateur',
+        role: (data.role as UserRole) || 'pointer',
+        status: (data.status as AccountStatus) || 'pending',
+        requestedAt: data.created_at || data.requestedAt || new Date().toISOString(),
+        updatedAt: data.updated_at || data.updatedAt,
+        assignedSessionId: data.assigned_session_id || data.assignedSessionId || null,
+        assignedSessionNom: data.assigned_session_nom || data.assignedSessionNom || null,
+        sessionId: data.assigned_session_id || data.assignedSessionId || null,
+      }));
 
       // Sort pending first, then by requestedAt desc
       list.sort((a, b) => {
@@ -41,11 +32,15 @@ export function subscribeToUserAccounts(
       });
 
       onUpdate(list);
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, 'users');
+    } catch (error) {
+      console.error('[PostgreSQL] Erreur chargement utilisateurs:', error);
+      onError(error);
     }
-  );
+  };
+
+  fetchUsers();
+  const intervalId = window.setInterval(fetchUsers, 5000);
+  return () => window.clearInterval(intervalId);
 }
 
 export async function updateAccount(
@@ -62,64 +57,67 @@ export async function updateAccount(
     email: string;
   }
 ): Promise<void> {
-  const userRef = doc(db, 'users', targetUid);
-  const now = new Date().toISOString();
-
   try {
-    const payload: Record<string, any> = {
-      ...updates,
-      updatedAt: now,
-      updatedBy: adminInfo.uid,
-    };
+    // 1. Mise à jour statut / rôle dans PostgreSQL
+    if (updates.status || updates.role) {
+      await ekalyApi.users.updateStatus(targetUid, updates.status || '', updates.role);
+    }
+
+    // 2. Assignation de session de voyage dans PostgreSQL
     if (updates.assignedSessionId !== undefined) {
-      payload.sessionId = updates.assignedSessionId;
-    }
-    if (updates.assignedSessionNom !== undefined) {
-      payload.sessionNom = updates.assignedSessionNom;
-    }
-    await updateDoc(userRef, payload);
-
-    // If role changed to admin or updated, sync with /admins doc
-    if (updates.role === 'admin') {
-      const adminRef = doc(db, 'admins', targetUid);
-      await setDoc(adminRef, {
-        email: adminInfo.email,
-        updatedAt: now,
-      }, { merge: true });
+      await ekalyApi.users.assignSession(
+        targetUid,
+        updates.assignedSessionId || '',
+        updates.assignedSessionNom || undefined
+      );
     }
 
-    // Record audit log
-    const logId = `log_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
-    const logRef = doc(db, 'auditLogs', logId);
-    const logData: AuditLog = {
-      id: logId,
-      action: `ACCOUNT_${updates.status ? updates.status.toUpperCase() : 'UPDATED'}`,
-      details: `Compte ${targetUid} mis à jour: ${JSON.stringify(updates)}`,
-      performedByUid: adminInfo.uid,
-      performedByName: adminInfo.displayName,
-      performedByEmail: adminInfo.email,
-      timestamp: now,
-    };
-    await setDoc(logRef, logData);
+    // 3. Enregistrement dans le journal d'audit PostgreSQL
+    await ekalyApi.audit.log(
+      `ACCOUNT_${updates.status ? updates.status.toUpperCase() : 'UPDATED'}`,
+      adminInfo.uid,
+      {
+        targetUid,
+        updates,
+        adminName: adminInfo.displayName,
+        adminEmail: adminInfo.email,
+      }
+    );
   } catch (error) {
-    handleFirestoreError(error, OperationType.UPDATE, `users/${targetUid}`);
+    console.error('[PostgreSQL] Erreur mise à jour compte:', error);
+    throw error;
   }
 }
 
+/**
+ * Abonnement au journal d'audit depuis PostgreSQL
+ */
 export function subscribeToAuditLogs(
   onUpdate: (logs: AuditLog[]) => void,
   onError: (err: any) => void
 ) {
-  const colRef = collection(db, 'auditLogs');
-  return onSnapshot(
-    colRef,
-    (snapshot) => {
-      const list: AuditLog[] = snapshot.docs.map((d) => d.data() as AuditLog);
+  const fetchAudit = async () => {
+    try {
+      const rows = await ekalyApi.audit.list(100);
+      const list: AuditLog[] = rows.map((d: any) => ({
+        id: d.id,
+        action: d.action,
+        details: typeof d.details === 'string' ? d.details : JSON.stringify(d.details),
+        performedByUid: d.performed_by_uid || '',
+        performedByName: d.details?.adminName || 'Administrateur',
+        performedByEmail: d.details?.adminEmail || '',
+        timestamp: d.timestamp || new Date().toISOString(),
+      }));
+
       list.sort((a, b) => b.timestamp.localeCompare(a.timestamp));
       onUpdate(list);
-    },
-    (error) => {
-      handleFirestoreError(error, OperationType.GET, 'auditLogs');
+    } catch (error) {
+      console.error('[PostgreSQL] Erreur chargement journal audit:', error);
+      onError(error);
     }
-  );
+  };
+
+  fetchAudit();
+  const intervalId = window.setInterval(fetchAudit, 8000);
+  return () => window.clearInterval(intervalId);
 }

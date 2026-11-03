@@ -12,6 +12,7 @@ import attendanceRouter from './routes/attendance.js';
 import usersRouter from './routes/users.js';
 import dashboardRouter from './routes/dashboard.js';
 import auditRouter from './routes/audit.js';
+import authRouter from './routes/auth.js';
 
 dotenv.config();
 
@@ -48,6 +49,7 @@ app.get(['/', '/health', '/api/health'], async (req, res) => {
 });
 
 // API Routes
+app.use('/api/auth', authRouter);
 app.use('/api/sessions', sessionsRouter);
 app.use('/api/students', studentsRouter);
 app.use('/api/distributions', distributionsRouter);
